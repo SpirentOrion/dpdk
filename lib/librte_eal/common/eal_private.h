@@ -34,6 +34,10 @@
 #ifndef _EAL_PRIVATE_H_
 #define _EAL_PRIVATE_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdio.h>
 #include <rte_pci.h>
 
@@ -327,5 +331,9 @@ int rte_eal_hugepage_init(void);
  * This function is private to the EAL.
  */
 int rte_eal_hugepage_attach(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _EAL_PRIVATE_H_ */

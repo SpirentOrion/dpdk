@@ -31,78 +31,89 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef EAL_THREAD_H
-#define EAL_THREAD_H
+#include <rte_common.h>
+#include <rte_interrupts.h>
+#include "eal_private.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include <rte_lcore.h>
-
-/**
- * basic loop of thread, called for each thread by eal_init().
- *
- * @param arg
- *   opaque pointer
- */
-__attribute__((noreturn)) void *eal_thread_loop(void *arg);
-
-/**
- * Init per-lcore info for master thread
- *
- * @param lcore_id
- *   identifier of master lcore
- */
-void eal_thread_init_master(unsigned lcore_id);
-
-/**
- * Get the NUMA socket id from cpu id.
- * This function is private to EAL.
- *
- * @param cpu_id
- *   The logical process id.
- * @return
- *   socket_id or SOCKET_ID_ANY
- */
-unsigned eal_cpu_socket_id(unsigned cpu_id);
-
-/**
- * Get the NUMA socket id from cpuset.
- * This function is private to EAL.
- *
- * @param cpusetp
- *   The point to a valid cpu set.
- * @return
- *   socket_id or SOCKET_ID_ANY
- */
-int eal_cpuset_socket_id(rte_cpuset_t *cpusetp);
-
-/**
- * Default buffer size to use with eal_thread_dump_affinity()
- */
-#define RTE_CPU_AFFINITY_STR_LEN            256
-
-/**
- * Dump the current pthread cpuset.
- * This function is private to EAL.
- *
- * Note:
- *   If the dump size is greater than the size of given buffer,
- *   the string will be truncated and with '\0' at the end.
- *
- * @param str
- *   The string buffer the cpuset will dump to.
- * @param size
- *   The string buffer size.
- * @return
- *   0 for success, -1 if truncation happens.
- */
 int
-eal_thread_dump_affinity(char *str, unsigned size);
-
-#ifdef __cplusplus
+rte_intr_callback_register(struct rte_intr_handle *intr_handle __rte_unused,
+			rte_intr_callback_fn cb __rte_unused,
+			void *cb_arg __rte_unused)
+{
+	return -ENOTSUP;
 }
-#endif
 
-#endif /* EAL_THREAD_H */
+int
+rte_intr_callback_unregister(struct rte_intr_handle *intr_handle __rte_unused,
+			rte_intr_callback_fn cb_fn __rte_unused,
+			void *cb_arg __rte_unused)
+{
+	return -ENOTSUP;
+}
+
+int
+rte_intr_enable(struct rte_intr_handle *intr_handle __rte_unused)
+{
+	return -ENOTSUP;
+}
+
+int
+rte_intr_disable(struct rte_intr_handle *intr_handle __rte_unused)
+{
+	return -ENOTSUP;
+}
+
+int
+rte_eal_intr_init(void)
+{
+	return 0;
+}
+
+int
+rte_intr_rx_ctl(struct rte_intr_handle *intr_handle,
+		int epfd, int op, unsigned int vec, void *data)
+{
+	RTE_SET_USED(intr_handle);
+	RTE_SET_USED(epfd);
+	RTE_SET_USED(op);
+	RTE_SET_USED(vec);
+	RTE_SET_USED(data);
+
+	return -ENOTSUP;
+}
+
+int
+rte_intr_efd_enable(struct rte_intr_handle *intr_handle, uint32_t nb_efd)
+{
+	RTE_SET_USED(intr_handle);
+	RTE_SET_USED(nb_efd);
+
+	return 0;
+}
+
+void
+rte_intr_efd_disable(struct rte_intr_handle *intr_handle)
+{
+	RTE_SET_USED(intr_handle);
+}
+
+int
+rte_intr_dp_is_en(struct rte_intr_handle *intr_handle)
+{
+	RTE_SET_USED(intr_handle);
+	return 0;
+}
+
+int
+rte_intr_allow_others(struct rte_intr_handle *intr_handle)
+{
+	RTE_SET_USED(intr_handle);
+	return 1;
+}
+
+int
+rte_intr_cap_multiple(struct rte_intr_handle *intr_handle)
+{
+	RTE_SET_USED(intr_handle);
+	return 0;
+}

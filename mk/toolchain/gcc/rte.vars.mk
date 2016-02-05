@@ -39,6 +39,7 @@
 #
 
 CC        = $(CROSS)gcc
+CXX       = $(CROSS)g++
 KERNELCC  = $(CROSS)gcc
 CPP       = $(CROSS)cpp
 # for now, we don't use as but nasm.
@@ -54,8 +55,10 @@ GCOV      = $(CROSS)gcov
 
 ifeq ("$(origin CC)", "command line")
 HOSTCC    = $(CC)
+HOSTCXX   = $(CXX)
 else
 HOSTCC    = gcc
+HOSTCXX   = gxx
 endif
 HOSTAS    = as
 
@@ -95,5 +98,5 @@ ifeq ($(shell test $(GCC_VERSION) -lt 47 && echo 1), 1)
 WERROR_FLAGS += -Wno-uninitialized
 endif
 
-export CC AS AR LD OBJCOPY OBJDUMP STRIP READELF
+export CC CXX AS AR LD OBJCOPY OBJDUMP STRIP READELF
 export TOOLCHAIN_CFLAGS TOOLCHAIN_LDFLAGS TOOLCHAIN_ASFLAGS

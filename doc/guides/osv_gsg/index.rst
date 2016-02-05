@@ -28,21 +28,17 @@
     (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-DPDK documentation
-==================
+Getting Started Guide for OSv 
+=================================
+
+|today|
+
+**Contents**
 
 .. toctree::
-   :maxdepth: 1
+    :maxdepth: 2
+    :numbered:
 
-   linux_gsg/index
-   freebsd_gsg/index
-   xen/index
-   osv_gsg/index
-   prog_guide/index
-   nics/index
-   cryptodevs/index
-   sample_app_ug/index
-   testpmd_app_ug/index
-   faq/index
-   rel_notes/index
-   contributing/index
+    intro
+    build_dpdk
+    build_sample_apps
