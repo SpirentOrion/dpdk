@@ -1,0 +1,5 @@
+# editor cruft
+.\#*
+
+# build cruft
+x86_64-*-*-*/
