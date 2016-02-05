@@ -64,6 +64,7 @@
 
 #include <drivers/device.hh>
 #include <drivers/pci-device.hh>
+#include <osv/pci.hh>
 
 /**
  * @file
@@ -117,6 +118,22 @@ pci_unbind_kernel_driver(struct rte_pci_device *dev __rte_unused)
 	return -ENOTSUP;
 }
 
+int
+rte_eal_pci_map_device(struct rte_pci_device *dev)
+{
+	RTE_LOG(DEBUG, EAL,
+                "	 Not managed by a supported kernel driver, skipped\n");
+	return 0;
+}
+
+void
+rte_eal_pci_unmap_device(struct rte_pci_device *dev)
+{
+	RTE_LOG(DEBUG, EAL,
+                "	 Not managed by a supported kernel driver, skipped\n");
+	return;
+}
+
 /* Scan one pci entry, and fill the devices list from it. */
 static int
 pci_scan_one(hw::hw_device* dev)
@@ -148,7 +165,7 @@ pci_scan_one(hw::hw_device* dev)
 	rte_dev->max_vfs = 0;
 
 	/* OSv has no NUMA support (yet) */
-	rte_dev->numa_node = -1;
+	rte_dev->numa_node = 0;
 
 	/* Disable interrupt */
 	rte_dev->intr_handle.fd = -1;
@@ -290,6 +307,39 @@ rte_eal_pci_probe_one_driver(struct rte_pci_driver *dr, struct rte_pci_device *d
 	}
 	/* return positive value if driver is not found */
 	return 1;
+}
+
+int
+rte_eal_pci_read_config(const struct rte_pci_device *device,
+                        void *buf, size_t len, off_t offset)
+{
+	uint8_t *data = static_cast<uint8_t *>(buf);
+
+	for (size_t i = 0; i < len; i++) {
+                data[i] = pci::read_pci_config_byte(device->addr.bus,
+                                                    device->addr.devid,
+                                                    device->addr.function,
+                                                    offset + i);
+	}
+
+	return 0;
+}
+
+int
+rte_eal_pci_write_config(const struct rte_pci_device *device,
+                         const void *buf, size_t len, off_t offset)
+{
+	const uint8_t *data = static_cast<const uint8_t *>(buf);
+
+ 	for (size_t i = 0; i < len; i++) {
+		pci::write_pci_config_byte(device->addr.bus,
+                                           device->addr.devid,
+                                           device->addr.function,
+                                           offset + i,
+                                           data[i]);
+	}
+
+	return 0;
 }
 
 /* Init the PCI EAL subsystem */

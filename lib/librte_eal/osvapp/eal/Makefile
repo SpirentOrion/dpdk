@@ -38,6 +38,7 @@ EXPORT_MAP := rte_eal_version.map
 LIBABIVER := 1
 
 VPATH += $(RTE_SDK)/lib/librte_eal/common
+VPATH += $(RTE_SDK)/lib/librte_eal/common/arch/$(ARCH_DIR)
 
 INC_FLAGS := -I$(SRCDIR)/include
 INC_FLAGS += -I$(RTE_SDK)/lib/librte_eal/common
@@ -86,6 +87,13 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_devargs.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_dev.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_options.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_thread.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_malloc.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += malloc_elem.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += malloc_heap.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_keepalive.c
+
+# from arch dir
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_cpuflags.c
 
 CFLAGS_eal.o := -D_GNU_SOURCE
 CFLAGS_eal_lcore.o := -D_GNU_SOURCE
@@ -112,4 +120,3 @@ SYMLINK-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP)-include/exec-env := \
 DEPDIRS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += lib/librte_eal/common
 
 include $(RTE_SDK)/mk/rte.lib.mk
-
