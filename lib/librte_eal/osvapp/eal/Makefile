@@ -68,7 +68,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_log.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_pci.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_debug.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_lcore.cc
-SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_timer.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_timer.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_interrupts.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_alarm.c
 
@@ -87,6 +87,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_devargs.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_dev.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_options.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_thread.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_timer.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_malloc.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += malloc_elem.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += malloc_heap.c

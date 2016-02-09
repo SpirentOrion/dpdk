@@ -50,81 +50,69 @@
 #include "eal_private.h"
 #include "eal_internal_cfg.h"
 
-#ifdef RTE_LIBEAL_USE_HPET
-#error "HPET is not supported in OSv"
-#endif
+#include <cpuid.hh>
+#include <osv/clock.hh>
+#include <osv/sched.hh>
 
 enum timer_source eal_timer_source = EAL_TIMER_TSC;
 
-/* The frequency of the RDTSC timer resolution */
-static uint64_t eal_tsc_resolution_hz = 0;
+using namespace osv::clock::literals;
 
-void
-rte_delay_us(unsigned us)
+uint64_t
+rte_get_hpet_hz(void)
 {
-	const uint64_t start = rte_get_timer_cycles();
-	const uint64_t ticks = (uint64_t)us * rte_get_timer_hz() / 1E6;
-	while ((rte_get_timer_cycles() - start) < ticks)
-		rte_pause();
+        if (internal_config.no_hpet)
+                rte_panic("Error, HPET called, but no HPET present\n");
+
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(1_s).count();
 }
 
 uint64_t
-rte_get_tsc_hz(void)
+rte_get_hpet_cycles(void)
 {
-	return eal_tsc_resolution_hz;
-}
+        if (internal_config.no_hpet)
+                rte_panic("Error, HPET called, but no HPET present\n");
 
-static int
-set_tsc_freq_from_clock(void)
-{
-#define NS_PER_SEC 1E9
-
-	struct timespec sleeptime;
-	sleeptime.tv_sec = 0;
-	sleeptime.tv_nsec = 5E8; /* 1/2 second */
-
-	struct timespec t_start, t_end;
-
-	if (clock_gettime(CLOCK_MONOTONIC, &t_start) == 0) {
-		uint64_t ns, end, start = rte_rdtsc();
-		nanosleep(&sleeptime,NULL);
-		clock_gettime(CLOCK_MONOTONIC_RAW, &t_end);
-		end = rte_rdtsc();
-		ns = ((t_end.tv_sec - t_start.tv_sec) * NS_PER_SEC);
-		ns += (t_end.tv_nsec - t_start.tv_nsec);
-
-		double secs = (double)ns/NS_PER_SEC;
-		eal_tsc_resolution_hz = (uint64_t)((end - start)/secs);
-		return 0;
-	}
-	return -1;
+        auto now = osv::clock::uptime::now();
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
 }
 
 static void
-set_tsc_freq_fallback(void)
+check_tsc_flags(void)
 {
-	RTE_LOG(WARNING, EAL, "WARNING: clock_gettime cannot use "
-			"CLOCK_MONOTONIC_RAW and HPET is not available"
-			" - clock timings may be less accurate.\n");
-	/* assume that the sleep(1) will sleep for 1 second */
-	uint64_t start = rte_rdtsc();
-	sleep(1);
-	eal_tsc_resolution_hz = rte_rdtsc() - start;
+        if (!processor::features().invariant_tsc) {
+                RTE_LOG(WARNING, EAL,
+                        "WARNING: cpu_flags "
+                        "invariant_tsc=no "
+                        "-> using unreliable clock cycles!\n");
+        }
 }
 
-void
-set_tsc_freq(void)
+uint64_t
+get_tsc_freq(void)
 {
-	if (set_tsc_freq_from_clock() < 0)
-		set_tsc_freq_fallback();
+        auto clock_start = osv::clock::uptime::now();
+        uint64_t tsc_start = rte_rdtsc();
 
-	RTE_LOG(INFO, EAL, "TSC frequency is ~%" PRIu64 " KHz\n",
-			eal_tsc_resolution_hz/1000);
+        sched::thread::sleep(100_ms);
+
+        std::chrono::duration<double> clock_diff = osv::clock::uptime::now() - clock_start;;
+        uint64_t tsc_diff = rte_rdtsc() - tsc_start;
+
+        uint64_t tsc_hz = tsc_diff / clock_diff.count();
+        return tsc_hz;
 }
 
 int
 rte_eal_timer_init(void)
 {
-	set_tsc_freq();
+        if (internal_config.no_hpet) {
+                eal_timer_source = EAL_TIMER_TSC;
+                set_tsc_freq();
+                check_tsc_flags();
+        } else {
+                eal_timer_source = EAL_TIMER_HPET;
+        }
+
 	return 0;
 }
