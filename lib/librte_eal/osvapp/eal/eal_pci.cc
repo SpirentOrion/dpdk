@@ -189,6 +189,7 @@ pci_scan_one(hw::hw_device* dev)
 		}
 	}
 
+        pci_dev->print();
 	/* device is valid, add in list (sorted) */
 	if (TAILQ_EMPTY(&pci_device_list)) {
 		TAILQ_INSERT_TAIL(&pci_device_list, rte_dev, next);
