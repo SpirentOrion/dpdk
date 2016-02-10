@@ -96,7 +96,7 @@ get_tsc_freq(void)
 
         sched::thread::sleep(100_ms);
 
-        std::chrono::duration<double> clock_diff = osv::clock::uptime::now() - clock_start;;
+        std::chrono::duration<double> clock_diff = osv::clock::uptime::now() - clock_start;
         uint64_t tsc_diff = rte_rdtsc() - tsc_start;
 
         uint64_t tsc_hz = tsc_diff / clock_diff.count();
