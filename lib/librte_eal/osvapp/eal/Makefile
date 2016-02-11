@@ -70,7 +70,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_debug.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_lcore.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_timer.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_interrupts.c
-SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_alarm.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_alarm.cc
 
 # from common dir
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_memzone.c
