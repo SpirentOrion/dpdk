@@ -28,56 +28,15 @@
 #   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 #   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-#
-# toolchain:
-#
-#   - define CC, LD, AR, AS, ... (overriden by cmdline value)
-#   - define TOOLCHAIN_CFLAGS variable (overriden by cmdline value)
-#   - define TOOLCHAIN_LDFLAGS variable (overriden by cmdline value)
-#   - define TOOLCHAIN_ASFLAGS variable (overriden by cmdline value)
 #
 
-CC        = $(CROSS)clang
-CXX       = $(CROSS)clang++
-KERNELCC  = $(CROSS)gcc
-CPP       = $(CROSS)cpp
-# for now, we don't use as but nasm.
-# AS      = $(CROSS)as
-AS        = nasm
-AR        = $(CROSS)ar
-LD        = $(CROSS)ld
-OBJCOPY   = $(CROSS)objcopy
-OBJDUMP   = $(CROSS)objdump
-STRIP     = $(CROSS)strip
-READELF   = $(CROSS)readelf
-GCOV      = $(CROSS)gcov
+#include "common_osvapp"
 
-ifeq ("$(origin CC)", "command line")
-HOSTCC    = $(CC)
-HOSTCXX   = $(CXX)
-else
-HOSTCC    = clang
-HOSTCXX   = clang++
-endif
-HOSTAS    = as
+CONFIG_RTE_MACHINE="default"
 
-TOOLCHAIN_ASFLAGS =
-TOOLCHAIN_CFLAGS =
-TOOLCHAIN_LDFLAGS =
+CONFIG_RTE_ARCH="x86_64"
+CONFIG_RTE_ARCH_X86_64=y
+CONFIG_RTE_ARCH_64=y
 
-WERROR_FLAGS := -W -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes
-WERROR_FLAGS += -Wmissing-declarations -Wold-style-definition -Wpointer-arith
-WERROR_FLAGS += -Wnested-externs -Wcast-qual
-WERROR_FLAGS += -Wformat-nonliteral -Wformat-security
-WERROR_FLAGS += -Wundef -Wwrite-strings
-WERROR_FLAGS += -Wno-error=unused-command-line-argument
-
-# process cpu flags
-include $(RTE_SDK)/mk/toolchain/$(RTE_TOOLCHAIN)/rte.toolchain-compat.mk
-
-# workaround clang bug with warning "missing field initializer" for "= {0}"
-WERROR_FLAGS += -Wno-missing-field-initializers
-
-export CC CXX AS AR LD OBJCOPY OBJDUMP STRIP READELF
-export TOOLCHAIN_CFLAGS TOOLCHAIN_LDFLAGS TOOLCHAIN_ASFLAGS
+CONFIG_RTE_TOOLCHAIN="clang"
+CONFIG_RTE_TOOLCHAIN_CLANG=y
