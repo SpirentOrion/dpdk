@@ -61,6 +61,7 @@
 #include "rte_pci_dev_ids.h"
 #include "eal_filesystem.h"
 #include "eal_private.h"
+#include "eal_interrupts_osv.hh"
 
 #include <drivers/device.hh>
 #include <drivers/pci-device.hh>
@@ -68,14 +69,9 @@
 
 /**
  * @file
- * PCI probing under linux
+ * PCI probing under OSvB
  *
- * This code is used to simulate a PCI probe by parsing information in
- * sysfs. Moreover, when a registered driver matches a device, the
- * kernel driver currently using it is unloaded and replaced by
- * igb_uio module, which is a very minimal userland driver for Intel
- * network card, only providing access to PCI BAR to applications, and
- * enabling bus master.
+ * This code probes the PCI bus via native OSv methods.
  */
 
 struct uio_map {
@@ -167,9 +163,16 @@ pci_scan_one(hw::hw_device* dev)
 	/* OSv has no NUMA support (yet) */
 	rte_dev->numa_node = 0;
 
-	/* Disable interrupt */
-	rte_dev->intr_handle.fd = -1;
-	rte_dev->intr_handle.type = RTE_INTR_HANDLE_UNKNOWN;
+	/* Configure interrupts */
+	if (eal_interrupts_osv_setup(&rte_dev->intr_handle, pci_dev) != 0) {
+		RTE_LOG(NOTICE, EAL, "   Interrupt setup failed\n");
+	}
+
+	/* Turn on bus mastering */
+	pci_dev->set_bus_master(true);
+	if (!pci_dev->get_bus_master()) {
+		RTE_LOG(NOTICE, EAL, "   Bus master setup failed\n");
+        }
 
 	for (int i = 0; ; i++) {
 		auto bar = pci_dev->get_bar(i+1);

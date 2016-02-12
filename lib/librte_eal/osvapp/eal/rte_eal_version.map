@@ -72,6 +72,9 @@ DPDK_2.0 {
 	rte_memzone_reserve_bounded;
 	rte_memzone_walk;
 	rte_openlog_stream;
+	rte_pollable_allocate;
+	rte_pollable_free;
+	rte_pollable_wake;
 	rte_set_application_usage_hook;
 	rte_set_log_level;
 	rte_set_log_type;

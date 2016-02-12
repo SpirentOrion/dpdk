@@ -35,29 +35,97 @@
 #error "don't include this file directly, please include generic <rte_interrupts.h>"
 #endif
 
-#ifndef _RTE_LINUXAPP_INTERRUPTS_H_
-#define _RTE_LINUXAPP_INTERRUPTS_H_
+#include <stdint.h>
 
+#ifndef _RTE_OSVAPP_INTERRUPTS_H_
+#define _RTE_OSVAPP_INTERRUPTS_H_
+
+#define RTE_MAX_RXTX_INTR_VEC_ID     32
 #define RTE_INTR_VEC_ZERO_OFFSET      0
 #define RTE_INTR_VEC_RXTX_OFFSET      1
 
-#define RTE_MAX_RXTX_INTR_VEC_ID     32
-
 enum rte_intr_handle_type {
-	RTE_INTR_HANDLE_UNKNOWN = 0,
-	RTE_INTR_HANDLE_UIO,      /**< uio device handle */
-	RTE_INTR_HANDLE_ALARM,    /**< alarm handle */
-	RTE_INTR_HANDLE_MAX
+        RTE_INTR_HANDLE_UNKNOWN = 0,
+        RTE_INTR_HANDLE_MSI,
+        RTE_INTR_HANDLE_MAX
 };
+
+#define RTE_INTR_EVENT_ADD            1UL
+#define RTE_INTR_EVENT_DEL            2UL
+
+typedef void (*rte_intr_event_cb_t)(int fd, void *arg);
+
+struct rte_epoll_data {
+	uint32_t event;               /**< event type */
+	void *data;                   /**< User data */
+};
+
+enum {
+	RTE_EPOLL_INVALID = 0,
+	RTE_EPOLL_VALID,
+	RTE_EPOLL_EXEC,
+};
+
+/** interrupt epoll event obj, taken by epoll_event.ptr */
+struct rte_epoll_event {
+	volatile uint32_t status;  /**< OUT: event status */
+	struct rte_epoll_data epdata;
+};
+
+struct rte_intr_pollable;
 
 /** Handle for interrupts. */
 struct rte_intr_handle {
-	int fd;                          /**< file descriptor */
+	struct rte_pollable *pollable;   /**< primary interrupt poll object */
+	void *device;                    /**< pointer to OSv device object */
+	void *msi;                       /**< pointer to OSv MSI interrupt manager */
 	enum rte_intr_handle_type type;  /**< handle type */
-	int max_intr;			 /**< max interrupt requested */
-	uint32_t nb_efd;		 /**< number of available efds */
+	uint32_t max_intr;               /**< max interrupt requested */
+	/*
+	 * Annoyingly, drivers query nb_efd directly.  The union is just to point
+	 * those encapsulation borked drivers to the right value.
+	 */
+	union {
+		uint32_t nb_efd;         /**< number of avaiable event fds */
+		uint32_t nb_pollables;   /**< number of available pollable objects */
+	};
+	uint8_t pad[4];
+	struct rte_pollable *pollables[RTE_MAX_RXTX_INTR_VEC_ID];
+	                                 /**< pollable objects for fastpath interrupts */
 	int *intr_vec;			 /**< intr vector number array */
+
 };
+
+#define RTE_EPOLL_PER_THREAD        -1  /**< to hint using per thread epfd */
+
+/**
+ * It waits for events on the epoll instance.
+ *
+ * @param epfd
+ *   Epoll instance fd on which the caller wait for events.
+ * @param events
+ *   Memory area contains the events that will be available for the caller.
+ * @param maxevents
+ *   Up to maxevents are returned, must greater than zero.
+ * @param timeout
+ *   Specifying a timeout of -1 causes a block indefinitely.
+ *   Specifying a timeout equal to zero cause to return immediately.
+ * @return
+ *   - On success, returns the number of available event.
+ *   - On failure, a negative value.
+ */
+int
+rte_epoll_wait(int epfd, struct rte_epoll_event *events,
+	       int maxevents, int timeout);
+
+/**
+ * The function returns the per thread epoll instance.
+ *
+ * @return
+ *   epfd the epoll instance referred to.
+ */
+int
+rte_intr_tls_epfd(void);
 
 /**
  * @param intr_handle
@@ -133,4 +201,4 @@ int rte_intr_allow_others(struct rte_intr_handle *intr_handle);
 int
 rte_intr_cap_multiple(struct rte_intr_handle *intr_handle);
 
-#endif /* _RTE_LINUXAPP_INTERRUPTS_H_ */
+#endif /* _RTE_OSVAPP_INTERRUPTS_H_ */

@@ -38,6 +38,7 @@
 #include <rte_common.h>
 #include <rte_cycles.h>
 #include <rte_interrupts.h>
+#include <rte_log.h>
 
 #include "test.h"
 
@@ -47,8 +48,10 @@
 enum test_interrupt_handle_type {
 	TEST_INTERRUPT_HANDLE_INVALID,
 	TEST_INTERRUPT_HANDLE_VALID,
+#if !defined(RTE_EXEC_ENV_OSVAPP)
 	TEST_INTERRUPT_HANDLE_VALID_UIO,
 	TEST_INTERRUPT_HANDLE_VALID_ALARM,
+#endif
 	TEST_INTERRUPT_HANDLE_CASE1,
 	TEST_INTERRUPT_HANDLE_MAX
 };
@@ -59,7 +62,8 @@ static struct rte_intr_handle intr_handles[TEST_INTERRUPT_HANDLE_MAX];
 static enum test_interrupt_handle_type test_intr_type =
 				TEST_INTERRUPT_HANDLE_MAX;
 
-#ifdef RTE_EXEC_ENV_LINUXAPP
+#if defined(RTE_EXEC_ENV_LINUXAPP)
+
 union intr_pipefds{
 	struct {
 		int pipefd[2];
@@ -156,7 +160,7 @@ test_interrupt_handle_compare(struct rte_intr_handle *intr_handle_l,
 	return 0;
 }
 
-#else
+#elif defined(RTE_EXEC_ENV_BSDAPP)
 /* to be implemented for bsd later */
 static inline int
 test_interrupt_handle_sanity_check(struct rte_intr_handle *intr_handle)
@@ -193,7 +197,35 @@ test_interrupt_handle_compare(struct rte_intr_handle *intr_handle_l,
 
 	return 0;
 }
-#endif /* RTE_EXEC_ENV_LINUXAPP */
+#elif defined(RTE_EXEC_ENV_OSVAPP)
+
+/**
+ * Need some C++isms in order to test the OSv implementation.  So, include
+ * the necessary functions here, but put the implementation in a C++ file.
+ */
+#include "test_interrupts_osv.h"
+
+static int
+test_interrupt_init(void)
+{
+	return test_interrupt_osv_init(intr_handles);
+}
+
+static int
+test_interrupt_deinit(void)
+{
+	return test_interrupt_osv_deinit(intr_handles);
+}
+
+static int
+test_interrupt_trigger_interrupt(void)
+{
+	return test_interrupt_osv_trigger_interrupt(test_intr_type);
+}
+
+#else
+#error "Unknown exec environment"
+#endif /* exec environments */
 
 /**
  * Callback for the test interrupt.
@@ -270,6 +302,7 @@ test_interrupt_enable(void)
 		return -1;
 	}
 
+#if !defined(RTE_EXEC_ENV_OSVAPP)
 	/* check with specific valid intr_handle */
 	test_intr_handle = intr_handles[TEST_INTERRUPT_HANDLE_VALID_ALARM];
 	if (rte_intr_enable(&test_intr_handle) == 0) {
@@ -277,6 +310,7 @@ test_interrupt_enable(void)
 			"successfully\n");
 		return -1;
 	}
+#endif
 
 	/* check with valid handler and its type */
 	test_intr_handle = intr_handles[TEST_INTERRUPT_HANDLE_CASE1];
@@ -285,12 +319,14 @@ test_interrupt_enable(void)
 		return -1;
 	}
 
+#if !defined(RTE_EXEC_ENV_OSVAPP)
 	test_intr_handle = intr_handles[TEST_INTERRUPT_HANDLE_VALID_UIO];
 	if (rte_intr_enable(&test_intr_handle) == 0) {
 		printf("unexpectedly enable a specific intr_handle "
 			"successfully\n");
 		return -1;
 	}
+#endif
 
 	return 0;
 }
@@ -326,6 +362,7 @@ test_interrupt_disable(void)
 		return -1;
 	}
 
+#if !defined(RTE_EXEC_ENV_OSVAPP)
 	/* check with specific valid intr_handle */
 	test_intr_handle = intr_handles[TEST_INTERRUPT_HANDLE_VALID_ALARM];
 	if (rte_intr_disable(&test_intr_handle) == 0) {
@@ -333,6 +370,7 @@ test_interrupt_disable(void)
 			"successfully\n");
 		return -1;
 	}
+#endif
 
 	/* check with valid handler and its type */
 	test_intr_handle = intr_handles[TEST_INTERRUPT_HANDLE_CASE1];
@@ -341,12 +379,14 @@ test_interrupt_disable(void)
 		return -1;
 	}
 
+#if !defined(RTE_EXEC_ENV_OSVAPP)
 	test_intr_handle = intr_handles[TEST_INTERRUPT_HANDLE_VALID_UIO];
 	if (rte_intr_disable(&test_intr_handle) == 0) {
 		printf("unexpectedly disable a specific intr_handle "
 			"successfully\n");
 		return -1;
 	}
+#endif
 
 	return 0;
 }
@@ -413,6 +453,7 @@ test_interrupt(void)
 		goto out;
 	}
 
+#if !defined(RTE_EXEC_ENV_OSVAPP)
 	printf("Check valid UIO interrupt full path\n");
 	if (test_interrupt_full_path_check(TEST_INTERRUPT_HANDLE_VALID_UIO)
 									< 0) {
@@ -428,6 +469,7 @@ test_interrupt(void)
 						"interrupt full path\n");
 		goto out;
 	}
+#endif
 
 	printf("start register/unregister test\n");
 	/* check if it will fail to register cb with intr_handle = NULL */
@@ -529,6 +571,7 @@ out:
 	rte_intr_callback_unregister(&test_intr_handle,
 			test_interrupt_callback_1, (void *)-1);
 
+#if !defined(RTE_EXEC_ENV_OSVAPP)
 	test_intr_handle = intr_handles[TEST_INTERRUPT_HANDLE_VALID_UIO];
 	rte_intr_callback_unregister(&test_intr_handle,
 			test_interrupt_callback, (void *)-1);
@@ -540,6 +583,7 @@ out:
 			test_interrupt_callback, (void *)-1);
 	rte_intr_callback_unregister(&test_intr_handle,
 			test_interrupt_callback_1, (void *)-1);
+#endif
 
 	rte_delay_ms(2 * TEST_INTERRUPT_CHECK_INTERVAL);
 	/* deinit */

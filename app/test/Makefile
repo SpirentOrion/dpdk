@@ -104,6 +104,16 @@ SRCS-y += test_interrupts.c
 SRCS-y += test_version.c
 SRCS-y += test_func_reentrancy.c
 
+ifeq ($(CONFIG_RTE_LIBRTE_EAL_OSVAPP),y)
+CXXFLAGS += -I$(RTE_SDK)/lib/librte_eal/osvapp/eal/
+CXXFLAGS += -I$(OSV_SDK)
+CXXFLAGS += -I$(OSV_SDK)/arch/x64
+CXXFLAGS += -I$(OSV_SDK)/arch/common
+CXXFLAGS += -I$(OSV_SDK)/include
+CXXFLAGS += -std=gnu++11
+SRCS-y += test_interrupts_osv.cc
+endif
+
 SRCS-$(CONFIG_RTE_LIBRTE_CMDLINE) += test_cmdline.c
 SRCS-$(CONFIG_RTE_LIBRTE_CMDLINE) += test_cmdline_num.c
 SRCS-$(CONFIG_RTE_LIBRTE_CMDLINE) += test_cmdline_etheraddr.c
