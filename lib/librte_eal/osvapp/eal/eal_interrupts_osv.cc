@@ -173,6 +173,8 @@ rte::intr_source::add(rte_intr_callback_fn cb_fn, void *cb_arg)
 
 	SCOPE_LOCK(_lock);
 	_callbacks.push_back(cb);
+
+	return 0;
 }
 
 int

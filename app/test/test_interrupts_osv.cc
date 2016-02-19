@@ -81,7 +81,12 @@ extern "C" {
 
 	int test_interrupt_osv_trigger_interrupt(int idx)
 	{
+		if (test_pollables[idx] == nullptr) {
+			return -1;
+		}
+
 		rte_pollable_wake(test_pollables[idx]);
+		return 0;
 	}
 
 	int test_interrupt_handle_sanity_check(struct rte_intr_handle *intr_handle)
