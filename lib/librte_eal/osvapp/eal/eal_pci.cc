@@ -174,13 +174,11 @@ pci_scan_one(hw::hw_device* dev)
 		RTE_LOG(NOTICE, EAL, "   Bus master setup failed\n");
         }
 
-	for (int i = 0; ; i++) {
+	for (int i = 0; i < PCI_MAX_RESOURCE; i++) {
 		auto bar = pci_dev->get_bar(i+1);
 		if (bar == nullptr) {
-			RTE_LOG(DEBUG, EAL, "   bar%d not available\n", i);
-			break;
-		}
-		if (bar->is_mmio()) {
+			continue;
+		} else if (bar->is_mmio()) {
 			rte_dev->mem_resource[i].len = bar->get_size();
 			rte_dev->mem_resource[i].phys_addr = bar->get_addr64();
 			bar->map();
@@ -316,13 +314,34 @@ int
 rte_eal_pci_read_config(const struct rte_pci_device *device,
                         void *buf, size_t len, off_t offset)
 {
-	uint8_t *data = static_cast<uint8_t *>(buf);
+	uint8_t *data = nullptr;
+	size_t last_read = 0, to_read = 0;
+	size_t idx = 0;
 
-	for (size_t i = 0; i < len; i++) {
-                data[i] = pci::read_pci_config_byte(device->addr.bus,
-                                                    device->addr.devid,
-                                                    device->addr.function,
-                                                    offset + i);
+	for (data = static_cast<uint8_t *>(buf), to_read = len;
+	     to_read > 0;
+	     to_read -= last_read, idx += last_read, data += last_read) {
+		if (to_read >= sizeof(uint32_t)) {
+			*(reinterpret_cast<uint32_t *>(data)) =
+				pci::read_pci_config(device->addr.bus,
+						device->addr.devid,
+						device->addr.function,
+						offset + idx);
+			last_read = sizeof(uint32_t);
+		} else if (to_read >= sizeof(uint16_t)) {
+			*(reinterpret_cast<uint16_t *>(data)) =
+				pci::read_pci_config_word(device->addr.bus,
+							device->addr.devid,
+							device->addr.function,
+							offset + idx);
+			last_read = sizeof(uint16_t);
+		} else {
+			*data = pci::read_pci_config_byte(device->addr.bus,
+							device->addr.devid,
+							device->addr.function,
+							offset + idx);
+			last_read = sizeof(uint8_t);
+		}
 	}
 
 	return 0;
@@ -332,14 +351,35 @@ int
 rte_eal_pci_write_config(const struct rte_pci_device *device,
                          const void *buf, size_t len, off_t offset)
 {
-	const uint8_t *data = static_cast<const uint8_t *>(buf);
+	const uint8_t *data = nullptr;
+	size_t last_write = 0, to_write = 0;
+	size_t idx = 0;
 
- 	for (size_t i = 0; i < len; i++) {
-		pci::write_pci_config_byte(device->addr.bus,
-                                           device->addr.devid,
-                                           device->addr.function,
-                                           offset + i,
-                                           data[i]);
+	for (data = static_cast<const uint8_t *>(buf), to_write = len;
+	     to_write > 0;
+	     to_write -= last_write, idx += last_write, data += last_write) {
+		if (to_write >= sizeof(uint32_t)) {
+			pci::write_pci_config(device->addr.bus,
+					device->addr.devid,
+					device->addr.function,
+					offset + idx,
+					*(reinterpret_cast<const uint32_t *>(data)));
+			last_write = sizeof(uint32_t);
+		} else if (to_write >= sizeof(uint16_t)) {
+			pci::write_pci_config_word(device->addr.bus,
+						device->addr.devid,
+						device->addr.function,
+						offset + idx,
+						*(reinterpret_cast<const uint16_t *>(data)));
+			last_write = sizeof(uint16_t);
+		} else {
+			pci::write_pci_config_byte(device->addr.bus,
+						device->addr.devid,
+						device->addr.function,
+						offset + idx,
+						*data);
+			last_write = sizeof(uint8_t);
+		}
 	}
 
 	return 0;
