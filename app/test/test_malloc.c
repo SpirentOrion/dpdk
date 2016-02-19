@@ -433,6 +433,15 @@ test_realloc(void)
 			rte_free(ptr2);
 			return -1;
 		}
+
+#if defined(RTE_EXEC_ENV_OSVAPP)
+	/*
+	 * This part of the test seems presumptuous.
+	 * The assumptions this code makes about where allocated items
+	 * exist in the heap are not true when using osvapp.
+	 */
+	(void)size4;
+#else
 	/* now allocate third element, free the second
 	 * and resize third. It should not move. (ptr1 is now invalid)
 	 */
@@ -452,6 +461,7 @@ test_realloc(void)
 	rte_free(ptr2);
 	/* first resize to half the size of the freed block */
 	char *ptr4 = rte_realloc(ptr3, size4, RTE_CACHE_LINE_SIZE);
+
 	if (!ptr4){
 		printf("NULL pointer returned from rte_realloc\n");
 		rte_free(ptr3);
@@ -470,7 +480,7 @@ test_realloc(void)
 		return -1;
 	}
 	rte_free(ptr4);
-
+#endif
 	/* now try a resize to a smaller size, see if it works */
 	const unsigned size5 = 1024;
 	const unsigned size6 = size5 / 2;
