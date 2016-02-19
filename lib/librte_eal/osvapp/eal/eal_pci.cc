@@ -136,6 +136,11 @@ pci_scan_one(hw::hw_device* dev)
 {
 	u8 bus, device, func;
 	auto pci_dev = static_cast<pci::device*>(dev);
+
+	/* we only really care about network devices, I think... */
+	if (pci_dev->get_base_class_code() != pci::function::PCI_CLASS_NETWORK)
+		return 0;
+
 	auto rte_dev = new rte_pci_device();
 
 	/* get bus id, device id, function no */
