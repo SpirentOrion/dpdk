@@ -42,18 +42,36 @@
 
 #include "test.h"
 
+#if defined(RTE_EXEC_ENV_BSDAPP)
+static
+void get_unknown_error(char *buf, size_t len, int err)
+{
+	snprintf(buf, len, "Unknown error: %d", err);
+}
+#elif defined(RTE_EXEC_ENV_LINUXAPP)
+static
+void get_unknown_error(char *buf, size_t len, int err)
+{
+	snprintf(buf, len, "Unknown error %d", err);
+}
+#elif defined(RTE_EXEC_ENV_OSVAPP)
+static
+void get_unknown_error(char *buf, size_t len, int err)
+{
+	(void)err;
+	snprintf(buf, len, "No error information");
+}
+#else
+#error "No get_unknown_error function defined for this platform."
+#endif
+
 static int
 test_errno(void)
 {
 	const char *rte_retval;
 	const char *libc_retval;
-#ifdef RTE_EXEC_ENV_BSDAPP
-	/* BSD has a colon in the string, unlike linux */
-	const char unknown_code_result[] = "Unknown error: %d";
-#else
-	const char unknown_code_result[] = "Unknown error %d";
-#endif
-	char expected_libc_retval[sizeof(unknown_code_result)+3];
+
+	char expected_libc_retval[1024];
 
 	/* use a small selection of standard errors for testing */
 	int std_errs[] = {EAGAIN, EBADF, EACCES, EINTR, EINVAL};
@@ -86,8 +104,8 @@ test_errno(void)
 		/* generate appropriate error string for unknown error number
 		 * and then check that this is what we got back. If not, we have
 		 * a duplicate error number that conflicts with errno.h */
-		snprintf(expected_libc_retval, sizeof(expected_libc_retval),
-				unknown_code_result, rte_errs[i]);
+		get_unknown_error(expected_libc_retval, sizeof(expected_libc_retval),
+				rte_errs[i]);
 		if ((strcmp(expected_libc_retval, libc_retval) != 0) &&
 				(strcmp("", libc_retval) != 0)){
 			printf("Error, duplicate error code %d\n", rte_errs[i]);
@@ -98,8 +116,8 @@ test_errno(void)
 	/* ensure that beyond RTE_MAX_ERRNO, we always get an unknown code */
 	rte_retval = rte_strerror(RTE_MAX_ERRNO + 1);
 	libc_retval = strerror(RTE_MAX_ERRNO + 1);
-	snprintf(expected_libc_retval, sizeof(expected_libc_retval),
-			unknown_code_result, RTE_MAX_ERRNO + 1);
+	get_unknown_error(expected_libc_retval, sizeof(expected_libc_retval),
+			RTE_MAX_ERRNO + 1);
 	printf("rte_strerror: '%s', strerror: '%s'\n",
 			rte_retval, libc_retval);
 	if ((strcmp(rte_retval, libc_retval) != 0) ||
