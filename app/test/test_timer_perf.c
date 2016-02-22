@@ -76,7 +76,7 @@ test_timer_perf(void)
 		rte_timer_init(&tms[i]);
 
 	const uint64_t ticks = rte_get_timer_hz() * DELAY_SECONDS;
-	const uint64_t ticks_per_ms = rte_get_tsc_hz()/1000;
+	const uint64_t ticks_per_ms = rte_get_timer_hz()/1000;
 	const uint64_t ticks_per_us = ticks_per_ms/1000;
 
 	while (iterations <= MAX_ITERATIONS) {

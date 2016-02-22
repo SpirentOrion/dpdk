@@ -1015,10 +1015,15 @@ test_mbuf(void)
 		return -1;
 	}
 
+#if defined(RTE_EXEC_ENV_OSVAPP)
+	/* This test relies on fork, which OSv doesn't support. */
+	(void)test_failing_mbuf_sanity_check;
+#else
 	if (test_failing_mbuf_sanity_check() < 0) {
 		printf("test_failing_mbuf_sanity_check() failed\n");
 		return -1;
 	}
+#endif
 	return 0;
 }
 

@@ -137,10 +137,16 @@ test_debug(void)
 {
 	rte_dump_stack();
 	rte_dump_registers();
+#if defined(RTE_EXEC_ENV_OSVAPP)
+	/* These tests rely on fork, which OSv doesn't support. */
+	(void)test_panic;
+	(void)test_exit;
+#else
 	if (test_panic() < 0)
 		return -1;
 	if (test_exit() < 0)
 		return -1;
+#endif
 	if (test_usage() < 0)
 		return -1;
 	return 0;

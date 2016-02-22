@@ -116,3 +116,18 @@ rte_eal_timer_init(void)
 
 	return 0;
 }
+
+int
+rte_eal_hpet_init(int make_default)
+{
+	if (internal_config.no_hpet) {
+		RTE_LOG(NOTICE, EAL, "HPET is disabled\n");
+		return -1;
+	}
+
+	if (make_default) {
+		eal_timer_source = EAL_TIMER_HPET;
+	}
+
+	return 0;
+}
