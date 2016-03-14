@@ -671,7 +671,7 @@ rte_eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	void **rxq;
 	unsigned i;
 
-	if (dev->data->rx_queues == NULL) { /* first time configuration */
+	if (dev->data->rx_queues == NULL && nb_queues != 0) { /* first time configuration */
 		dev->data->rx_queues = rte_zmalloc("ethdev->rx_queues",
 				sizeof(dev->data->rx_queues[0]) * nb_queues,
 				RTE_CACHE_LINE_SIZE);
@@ -679,7 +679,7 @@ rte_eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 			dev->data->nb_rx_queues = 0;
 			return -(ENOMEM);
 		}
-	} else { /* re-configure */
+	} else if (dev->data->rx_queues != NULL && nb_queues != 0) { /* re-configure */
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_release, -ENOTSUP);
 
 		rxq = dev->data->rx_queues;
@@ -699,6 +699,13 @@ rte_eth_dev_rx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 
 		dev->data->rx_queues = rxq;
 
+	} else if (dev->data->rx_queues != NULL && nb_queues == 0) {
+		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_queue_release, -ENOTSUP);
+
+		rxq = dev->data->rx_queues;
+
+		for (i = nb_queues; i < old_nb_queues; i++)
+			(*dev->dev_ops->rx_queue_release)(rxq[i]);
 	}
 	dev->data->nb_rx_queues = nb_queues;
 	return 0;
@@ -708,10 +715,6 @@ int
 rte_eth_dev_rx_queue_start(uint8_t port_id, uint16_t rx_queue_id)
 {
 	struct rte_eth_dev *dev;
-
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
@@ -739,10 +742,6 @@ rte_eth_dev_rx_queue_stop(uint8_t port_id, uint16_t rx_queue_id)
 {
 	struct rte_eth_dev *dev;
 
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
-
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
 	dev = &rte_eth_devices[port_id];
@@ -769,10 +768,6 @@ rte_eth_dev_tx_queue_start(uint8_t port_id, uint16_t tx_queue_id)
 {
 	struct rte_eth_dev *dev;
 
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
-
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
 	dev = &rte_eth_devices[port_id];
@@ -798,10 +793,6 @@ int
 rte_eth_dev_tx_queue_stop(uint8_t port_id, uint16_t tx_queue_id)
 {
 	struct rte_eth_dev *dev;
-
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
@@ -831,7 +822,7 @@ rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	void **txq;
 	unsigned i;
 
-	if (dev->data->tx_queues == NULL) { /* first time configuration */
+	if (dev->data->tx_queues == NULL && nb_queues != 0) { /* first time configuration */
 		dev->data->tx_queues = rte_zmalloc("ethdev->tx_queues",
 						   sizeof(dev->data->tx_queues[0]) * nb_queues,
 						   RTE_CACHE_LINE_SIZE);
@@ -839,7 +830,7 @@ rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 			dev->data->nb_tx_queues = 0;
 			return -(ENOMEM);
 		}
-	} else { /* re-configure */
+	} else if (dev->data->tx_queues != NULL && nb_queues != 0) { /* re-configure */
 		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_release, -ENOTSUP);
 
 		txq = dev->data->tx_queues;
@@ -859,6 +850,13 @@ rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 
 		dev->data->tx_queues = txq;
 
+	} else if (dev->data->tx_queues != NULL && nb_queues == 0) {
+		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->tx_queue_release, -ENOTSUP);
+
+		txq = dev->data->tx_queues;
+
+		for (i = nb_queues; i < old_nb_queues; i++)
+			(*dev->dev_ops->tx_queue_release)(txq[i]);
 	}
 	dev->data->nb_tx_queues = nb_queues;
 	return 0;
@@ -871,10 +869,6 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
 	int diag;
-
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
@@ -909,23 +903,21 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 * configured device.
 	 */
 	(*dev->dev_ops->dev_infos_get)(dev, &dev_info);
+
+	if (nb_rx_q == 0 && nb_tx_q == 0) {
+		RTE_PMD_DEBUG_TRACE("ethdev port_id=%d both rx and tx queue cannot be 0\n", port_id);
+		return -EINVAL;
+	}
+
 	if (nb_rx_q > dev_info.max_rx_queues) {
 		RTE_PMD_DEBUG_TRACE("ethdev port_id=%d nb_rx_queues=%d > %d\n",
 				port_id, nb_rx_q, dev_info.max_rx_queues);
-		return -EINVAL;
-	}
-	if (nb_rx_q == 0) {
-		RTE_PMD_DEBUG_TRACE("ethdev port_id=%d nb_rx_q == 0\n", port_id);
 		return -EINVAL;
 	}
 
 	if (nb_tx_q > dev_info.max_tx_queues) {
 		RTE_PMD_DEBUG_TRACE("ethdev port_id=%d nb_tx_queues=%d > %d\n",
 				port_id, nb_tx_q, dev_info.max_tx_queues);
-		return -EINVAL;
-	}
-	if (nb_tx_q == 0) {
-		RTE_PMD_DEBUG_TRACE("ethdev port_id=%d nb_tx_q == 0\n", port_id);
 		return -EINVAL;
 	}
 
@@ -1057,10 +1049,6 @@ rte_eth_dev_start(uint8_t port_id)
 	struct rte_eth_dev *dev;
 	int diag;
 
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
-
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
 	dev = &rte_eth_devices[port_id];
@@ -1094,10 +1082,6 @@ rte_eth_dev_stop(uint8_t port_id)
 {
 	struct rte_eth_dev *dev;
 
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_RET();
-
 	RTE_ETH_VALID_PORTID_OR_RET(port_id);
 	dev = &rte_eth_devices[port_id];
 
@@ -1119,10 +1103,6 @@ rte_eth_dev_set_link_up(uint8_t port_id)
 {
 	struct rte_eth_dev *dev;
 
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
-
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
 	dev = &rte_eth_devices[port_id];
@@ -1136,10 +1116,6 @@ rte_eth_dev_set_link_down(uint8_t port_id)
 {
 	struct rte_eth_dev *dev;
 
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
-
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
 	dev = &rte_eth_devices[port_id];
@@ -1152,10 +1128,6 @@ void
 rte_eth_dev_close(uint8_t port_id)
 {
 	struct rte_eth_dev *dev;
-
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_RET();
 
 	RTE_ETH_VALID_PORTID_OR_RET(port_id);
 	dev = &rte_eth_devices[port_id];
@@ -1180,10 +1152,6 @@ rte_eth_rx_queue_setup(uint8_t port_id, uint16_t rx_queue_id,
 	uint32_t mbp_buf_size;
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
-
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
@@ -1264,10 +1232,6 @@ rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
 
-	/* This function is only safe when called from the primary process
-	 * in a multi-process setup*/
-	RTE_PROC_PRIMARY_OR_ERR_RET(-E_RTE_SECONDARY);
-
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
 
 	dev = &rte_eth_devices[port_id];
@@ -1304,6 +1268,52 @@ rte_eth_tx_queue_setup(uint8_t port_id, uint16_t tx_queue_id,
 
 	return (*dev->dev_ops->tx_queue_setup)(dev, tx_queue_id, nb_tx_desc,
 					       socket_id, tx_conf);
+}
+
+void
+rte_eth_tx_buffer_drop_callback(struct rte_mbuf **pkts, uint16_t unsent,
+		void *userdata __rte_unused)
+{
+	unsigned i;
+
+	for (i = 0; i < unsent; i++)
+		rte_pktmbuf_free(pkts[i]);
+}
+
+void
+rte_eth_tx_buffer_count_callback(struct rte_mbuf **pkts, uint16_t unsent,
+		void *userdata)
+{
+	uint64_t *count = userdata;
+	unsigned i;
+
+	for (i = 0; i < unsent; i++)
+		rte_pktmbuf_free(pkts[i]);
+
+	*count += unsent;
+}
+
+int
+rte_eth_tx_buffer_set_err_callback(struct rte_eth_dev_tx_buffer *buffer,
+		buffer_tx_error_fn cbfn, void *userdata)
+{
+	buffer->error_callback = cbfn;
+	buffer->error_userdata = userdata;
+	return 0;
+}
+
+int
+rte_eth_tx_buffer_init(struct rte_eth_dev_tx_buffer *buffer, uint16_t size)
+{
+	if (buffer == NULL)
+		return -EINVAL;
+
+	buffer->size = size;
+	if (buffer->error_callback == NULL)
+		rte_eth_tx_buffer_set_err_callback(buffer,
+				rte_eth_tx_buffer_drop_callback, NULL);
+
+	return 0;
 }
 
 void
@@ -1693,16 +1703,17 @@ rte_eth_dev_set_vlan_strip_on_queue(uint8_t port_id, uint16_t rx_queue_id, int o
 }
 
 int
-rte_eth_dev_set_vlan_ether_type(uint8_t port_id, uint16_t tpid)
+rte_eth_dev_set_vlan_ether_type(uint8_t port_id,
+				enum rte_vlan_type vlan_type,
+				uint16_t tpid)
 {
 	struct rte_eth_dev *dev;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->vlan_tpid_set, -ENOTSUP);
-	(*dev->dev_ops->vlan_tpid_set)(dev, tpid);
 
-	return 0;
+	return (*dev->dev_ops->vlan_tpid_set)(dev, vlan_type, tpid);
 }
 
 int
@@ -1855,7 +1866,7 @@ rte_eth_check_reta_mask(struct rte_eth_rss_reta_entry64 *reta_conf,
 static int
 rte_eth_check_reta_entry(struct rte_eth_rss_reta_entry64 *reta_conf,
 			 uint16_t reta_size,
-			 uint8_t max_rxq)
+			 uint16_t max_rxq)
 {
 	uint16_t i, idx, shift;
 
@@ -1963,8 +1974,8 @@ rte_eth_dev_rss_hash_conf_get(uint8_t port_id,
 }
 
 int
-rte_eth_dev_udp_tunnel_add(uint8_t port_id,
-			   struct rte_eth_udp_tunnel *udp_tunnel)
+rte_eth_dev_udp_tunnel_port_add(uint8_t port_id,
+				struct rte_eth_udp_tunnel *udp_tunnel)
 {
 	struct rte_eth_dev *dev;
 
@@ -1980,13 +1991,13 @@ rte_eth_dev_udp_tunnel_add(uint8_t port_id,
 	}
 
 	dev = &rte_eth_devices[port_id];
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->udp_tunnel_add, -ENOTSUP);
-	return (*dev->dev_ops->udp_tunnel_add)(dev, udp_tunnel);
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->udp_tunnel_port_add, -ENOTSUP);
+	return (*dev->dev_ops->udp_tunnel_port_add)(dev, udp_tunnel);
 }
 
 int
-rte_eth_dev_udp_tunnel_delete(uint8_t port_id,
-			      struct rte_eth_udp_tunnel *udp_tunnel)
+rte_eth_dev_udp_tunnel_port_delete(uint8_t port_id,
+				   struct rte_eth_udp_tunnel *udp_tunnel)
 {
 	struct rte_eth_dev *dev;
 
@@ -2003,8 +2014,8 @@ rte_eth_dev_udp_tunnel_delete(uint8_t port_id,
 		return -EINVAL;
 	}
 
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->udp_tunnel_del, -ENOTSUP);
-	return (*dev->dev_ops->udp_tunnel_del)(dev, udp_tunnel);
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->udp_tunnel_port_del, -ENOTSUP);
+	return (*dev->dev_ops->udp_tunnel_port_del)(dev, udp_tunnel);
 }
 
 int
@@ -2477,7 +2488,7 @@ rte_eth_dev_callback_register(uint8_t port_id,
 	/* create a new callback. */
 	if (user_cb == NULL)
 		user_cb = rte_zmalloc("INTR_USER_CALLBACK",
-		                      sizeof(struct rte_eth_dev_callback), 0);
+					sizeof(struct rte_eth_dev_callback), 0);
 	if (user_cb != NULL) {
 		user_cb->cb_fn = cb_fn;
 		user_cb->cb_arg = cb_arg;
@@ -3236,4 +3247,58 @@ rte_eth_copy_pci_info(struct rte_eth_dev *eth_dev, struct rte_pci_device *pci_de
 	eth_dev->data->kdrv = pci_dev->kdrv;
 	eth_dev->data->numa_node = pci_dev->numa_node;
 	eth_dev->data->drv_name = pci_dev->driver->name;
+}
+
+int
+rte_eth_dev_l2_tunnel_eth_type_conf(uint8_t port_id,
+				    struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	struct rte_eth_dev *dev;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	if (l2_tunnel == NULL) {
+		RTE_PMD_DEBUG_TRACE("Invalid l2_tunnel parameter\n");
+		return -EINVAL;
+	}
+
+	if (l2_tunnel->l2_tunnel_type >= RTE_TUNNEL_TYPE_MAX) {
+		RTE_PMD_DEBUG_TRACE("Invalid tunnel type\n");
+		return -EINVAL;
+	}
+
+	dev = &rte_eth_devices[port_id];
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->l2_tunnel_eth_type_conf,
+				-ENOTSUP);
+	return (*dev->dev_ops->l2_tunnel_eth_type_conf)(dev, l2_tunnel);
+}
+
+int
+rte_eth_dev_l2_tunnel_offload_set(uint8_t port_id,
+				  struct rte_eth_l2_tunnel_conf *l2_tunnel,
+				  uint32_t mask,
+				  uint8_t en)
+{
+	struct rte_eth_dev *dev;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+
+	if (l2_tunnel == NULL) {
+		RTE_PMD_DEBUG_TRACE("Invalid l2_tunnel parameter\n");
+		return -EINVAL;
+	}
+
+	if (l2_tunnel->l2_tunnel_type >= RTE_TUNNEL_TYPE_MAX) {
+		RTE_PMD_DEBUG_TRACE("Invalid tunnel type.\n");
+		return -EINVAL;
+	}
+
+	if (mask == 0) {
+		RTE_PMD_DEBUG_TRACE("Mask should have a value.\n");
+		return -EINVAL;
+	}
+
+	dev = &rte_eth_devices[port_id];
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->l2_tunnel_offload_set,
+				-ENOTSUP);
+	return (*dev->dev_ops->l2_tunnel_offload_set)(dev, l2_tunnel, mask, en);
 }

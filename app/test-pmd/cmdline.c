@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2015 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
  *   Copyright(c) 2014 6WIND S.A.
  *   All rights reserved.
  *
@@ -277,8 +277,8 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"    Set the VLAN QinQ (extended queue in queue)"
 			" on a port.\n\n"
 
-			"vlan set tpid (value) (port_id)\n"
-			"    Set the outer VLAN TPID for Packet Filtering on"
+			"vlan set (inner|outer) tpid (value) (port_id)\n"
+			"    Set the VLAN TPID for Packet Filtering on"
 			" a port\n\n"
 
 			"rx_vlan add (vlan_id|all) (port_id)\n"
@@ -297,16 +297,14 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"    Remove a vlan_id, to the set of VLAN identifiers"
 			"filtered for VF(s) from port_id.\n\n"
 
-			"rx_vlan set tpid (value) (port_id)\n"
-			"    Set the outer VLAN TPID for Packet Filtering on"
-			" a port\n\n"
-
 			"tunnel_filter add (port_id) (outer_mac) (inner_mac) (ip_addr) "
-			"(inner_vlan) (vxlan|nvgre) (filter_type) (tenant_id) (queue_id)\n"
+			"(inner_vlan) (vxlan|nvgre|ipingre) (imac-ivlan|imac-ivlan-tenid|"
+			"imac-tenid|imac|omac-imac-tenid|oip|iip) (tenant_id) (queue_id)\n"
 			"   add a tunnel filter of a port.\n\n"
 
 			"tunnel_filter rm (port_id) (outer_mac) (inner_mac) (ip_addr) "
-			"(inner_vlan) (vxlan|nvgre) (filter_type) (tenant_id) (queue_id)\n"
+			"(inner_vlan) (vxlan|nvgre|ipingre) (imac-ivlan|imac-ivlan-tenid|"
+			"imac-tenid|imac|omac-imac-tenid|oip|iip) (tenant_id) (queue_id)\n"
 			"   remove a tunnel filter of a port.\n\n"
 
 			"rx_vxlan_port add (udp_port) (port_id)\n"
@@ -502,6 +500,27 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set link-down port (port_id)\n"
 			"	Set link down for a port.\n\n"
 
+			"E-tag set insertion on port-tag-id (value)"
+			" port (port_id) vf (vf_id)\n"
+			"    Enable E-tag insertion for a VF on a port\n\n"
+
+			"E-tag set insertion off port (port_id) vf (vf_id)\n"
+			"    Disable E-tag insertion for a VF on a port\n\n"
+
+			"E-tag set stripping (on|off) port (port_id)\n"
+			"    Enable/disable E-tag stripping on a port\n\n"
+
+			"E-tag set forwarding (on|off) port (port_id)\n"
+			"    Enable/disable E-tag based forwarding"
+			" on a port\n\n"
+
+			"E-tag set filter add e-tag-id (value) dst-pool"
+			" (pool_id) port (port_id)\n"
+			"    Add an E-tag forwarding filter on a port\n\n"
+
+			"E-tag set filter del e-tag-id (value) port (port_id)\n"
+			"    Delete an E-tag forwarding filter on a port\n\n"
+
 			, list_pkt_forwarding_modes()
 		);
 	}
@@ -572,7 +591,15 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"port (port_id) (rxq|txq) (queue_id) (start|stop)\n"
 			"    Start/stop a rx/tx queue of port X. Only take effect"
-			" when port X is started\n"
+			" when port X is started\n\n"
+
+			"port config (port_id|all) l2-tunnel E-tag ether-type"
+			" (value)\n"
+			"    Set the value of E-tag ether-type.\n\n"
+
+			"port config (port_id|all) l2-tunnel E-tag"
+			" (enable|disable)\n"
+			"    Enable/disable the E-tag support.\n\n"
 		);
 	}
 
@@ -1163,17 +1190,16 @@ cmd_config_rx_tx_parsed(void *parsed_result,
 		printf("Please stop all ports first\n");
 		return;
 	}
-
 	if (!strcmp(res->name, "rxq")) {
-		if (res->value <= 0) {
-			printf("rxq %d invalid - must be > 0\n", res->value);
+		if (!res->value && !nb_txq) {
+			printf("Warning: Either rx or tx queues should be non zero\n");
 			return;
 		}
 		nb_rxq = res->value;
 	}
 	else if (!strcmp(res->name, "txq")) {
-		if (res->value <= 0) {
-			printf("txq %d invalid - must be > 0\n", res->value);
+		if (!res->value && !nb_rxq) {
+			printf("Warning: Either rx or tx queues should be non zero\n");
 			return;
 		}
 		nb_txq = res->value;
@@ -1769,7 +1795,7 @@ parse_reta_config(const char *str,
 	int i;
 	unsigned size;
 	uint16_t hash_index, idx, shift;
-	uint8_t nb_queue;
+	uint16_t nb_queue;
 	char s[256];
 	const char *p, *p0 = str;
 	char *end;
@@ -1802,7 +1828,7 @@ parse_reta_config(const char *str,
 		}
 
 		hash_index = (uint16_t)int_fld[FLD_HASH_INDEX];
-		nb_queue = (uint8_t)int_fld[FLD_QUEUE];
+		nb_queue = (uint16_t)int_fld[FLD_QUEUE];
 
 		if (hash_index >= nb_entries) {
 			printf("Invalid RETA hash index=%d\n", hash_index);
@@ -2420,11 +2446,11 @@ parse_item_list(char* str, const char* item_name, unsigned int max_items,
 		}
 		if (c != ',') {
 			printf("character %c is not a decimal digit\n", c);
-			return (0);
+			return 0;
 		}
 		if (! value_ok) {
 			printf("No valid value before comma\n");
-			return (0);
+			return 0;
 		}
 		if (nb_item < max_items) {
 			parsed_items[nb_item] = value;
@@ -2436,11 +2462,11 @@ parse_item_list(char* str, const char* item_name, unsigned int max_items,
 	if (nb_item >= max_items) {
 		printf("Number of %s = %u > %u (maximum items)\n",
 		       item_name, nb_item + 1, max_items);
-		return (0);
+		return 0;
 	}
 	parsed_items[nb_item++] = value;
 	if (! check_unique_values)
-		return (nb_item);
+		return nb_item;
 
 	/*
 	 * Then, check that all values in the list are differents.
@@ -2451,11 +2477,11 @@ parse_item_list(char* str, const char* item_name, unsigned int max_items,
 			if (parsed_items[j] == parsed_items[i]) {
 				printf("duplicated %s %u at index %u and %u\n",
 				       item_name, parsed_items[i], i, j);
-				return (0);
+				return 0;
 			}
 		}
 	}
-	return (nb_item);
+	return nb_item;
 }
 
 struct cmd_set_list_result {
@@ -2747,6 +2773,7 @@ cmdline_parse_inst_t cmd_rx_vlan_filter_all = {
 struct cmd_vlan_offload_result {
 	cmdline_fixed_string_t vlan;
 	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t vlan_type;
 	cmdline_fixed_string_t what;
 	cmdline_fixed_string_t on;
 	cmdline_fixed_string_t port_id;
@@ -2847,6 +2874,7 @@ cmdline_parse_inst_t cmd_vlan_offload = {
 struct cmd_vlan_tpid_result {
 	cmdline_fixed_string_t vlan;
 	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t vlan_type;
 	cmdline_fixed_string_t what;
 	uint16_t tp_id;
 	uint8_t port_id;
@@ -2858,8 +2886,17 @@ cmd_vlan_tpid_parsed(void *parsed_result,
 			  __attribute__((unused)) void *data)
 {
 	struct cmd_vlan_tpid_result *res = parsed_result;
-	vlan_tpid_set(res->port_id, res->tp_id);
-	return;
+	enum rte_vlan_type vlan_type;
+
+	if (!strcmp(res->vlan_type, "inner"))
+		vlan_type = ETH_VLAN_TYPE_INNER;
+	else if (!strcmp(res->vlan_type, "outer"))
+		vlan_type = ETH_VLAN_TYPE_OUTER;
+	else {
+		printf("Unknown vlan type\n");
+		return;
+	}
+	vlan_tpid_set(res->port_id, vlan_type, res->tp_id);
 }
 
 cmdline_parse_token_string_t cmd_vlan_tpid_vlan =
@@ -2868,6 +2905,9 @@ cmdline_parse_token_string_t cmd_vlan_tpid_vlan =
 cmdline_parse_token_string_t cmd_vlan_tpid_set =
 	TOKEN_STRING_INITIALIZER(struct cmd_vlan_tpid_result,
 				 set, "set");
+cmdline_parse_token_string_t cmd_vlan_type =
+	TOKEN_STRING_INITIALIZER(struct cmd_vlan_tpid_result,
+				 vlan_type, "inner#outer");
 cmdline_parse_token_string_t cmd_vlan_tpid_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_vlan_tpid_result,
 				 what, "tpid");
@@ -2881,10 +2921,12 @@ cmdline_parse_token_num_t cmd_vlan_tpid_portid =
 cmdline_parse_inst_t cmd_vlan_tpid = {
 	.f = cmd_vlan_tpid_parsed,
 	.data = NULL,
-	.help_str = "set tpid tp_id port_id, set the Outer VLAN Ether type",
+	.help_str = "set inner|outer tpid tp_id port_id, set the VLAN "
+		    "Ether type",
 	.tokens = {
 		(void *)&cmd_vlan_tpid_vlan,
 		(void *)&cmd_vlan_tpid_set,
+		(void *)&cmd_vlan_type,
 		(void *)&cmd_vlan_tpid_what,
 		(void *)&cmd_vlan_tpid_tpid,
 		(void *)&cmd_vlan_tpid_portid,
@@ -2954,12 +2996,6 @@ cmd_tx_vlan_set_parsed(void *parsed_result,
 		       __attribute__((unused)) void *data)
 {
 	struct cmd_tx_vlan_set_result *res = parsed_result;
-	int vlan_offload = rte_eth_dev_get_vlan_offload(res->port_id);
-
-	if (vlan_offload & ETH_VLAN_EXTEND_OFFLOAD) {
-		printf("Error, as QinQ has been enabled.\n");
-		return;
-	}
 
 	tx_vlan_set(res->port_id, res->vlan_id);
 }
@@ -2970,12 +3006,12 @@ cmdline_parse_token_string_t cmd_tx_vlan_set_tx_vlan =
 cmdline_parse_token_string_t cmd_tx_vlan_set_set =
 	TOKEN_STRING_INITIALIZER(struct cmd_tx_vlan_set_result,
 				 set, "set");
-cmdline_parse_token_num_t cmd_tx_vlan_set_vlanid =
-	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_result,
-			      vlan_id, UINT16);
 cmdline_parse_token_num_t cmd_tx_vlan_set_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_result,
 			      port_id, UINT8);
+cmdline_parse_token_num_t cmd_tx_vlan_set_vlanid =
+	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_result,
+			      vlan_id, UINT16);
 
 cmdline_parse_inst_t cmd_tx_vlan_set = {
 	.f = cmd_tx_vlan_set_parsed,
@@ -3006,12 +3042,6 @@ cmd_tx_vlan_set_qinq_parsed(void *parsed_result,
 			    __attribute__((unused)) void *data)
 {
 	struct cmd_tx_vlan_set_qinq_result *res = parsed_result;
-	int vlan_offload = rte_eth_dev_get_vlan_offload(res->port_id);
-
-	if (!(vlan_offload & ETH_VLAN_EXTEND_OFFLOAD)) {
-		printf("Error, as QinQ hasn't been enabled.\n");
-		return;
-	}
 
 	tx_qinq_set(res->port_id, res->vlan_id, res->vlan_id_outer);
 }
@@ -6640,18 +6670,22 @@ cmd_tunnel_filter_parsed(void *parsed_result,
 	struct rte_eth_tunnel_filter_conf tunnel_filter_conf;
 	int ret = 0;
 
-	tunnel_filter_conf.outer_mac = &res->outer_mac;
-	tunnel_filter_conf.inner_mac = &res->inner_mac;
+	memset(&tunnel_filter_conf, 0, sizeof(tunnel_filter_conf));
+
+	ether_addr_copy(&res->outer_mac, &tunnel_filter_conf.outer_mac);
+	ether_addr_copy(&res->inner_mac, &tunnel_filter_conf.inner_mac);
 	tunnel_filter_conf.inner_vlan = res->inner_vlan;
 
 	if (res->ip_value.family == AF_INET) {
 		tunnel_filter_conf.ip_addr.ipv4_addr =
-			res->ip_value.addr.ipv4.s_addr;
+			rte_be_to_cpu_32(res->ip_value.addr.ipv4.s_addr);
 		tunnel_filter_conf.ip_type = RTE_TUNNEL_IPTYPE_IPV4;
 	} else {
-		memcpy(&(tunnel_filter_conf.ip_addr.ipv6_addr),
-			&(res->ip_value.addr.ipv6),
-			sizeof(struct in6_addr));
+		int i;
+		for (i = 0; i < 4; i++) {
+			tunnel_filter_conf.ip_addr.ipv6_addr[i] =
+			rte_be_to_cpu_32(res->ip_value.addr.ipv6.s6_addr32[i]);
+		}
 		tunnel_filter_conf.ip_type = RTE_TUNNEL_IPTYPE_IPV6;
 	}
 
@@ -6667,6 +6701,10 @@ cmd_tunnel_filter_parsed(void *parsed_result,
 	else if (!strcmp(res->filter_type, "omac-imac-tenid"))
 		tunnel_filter_conf.filter_type =
 			RTE_TUNNEL_FILTER_OMAC_TENID_IMAC;
+	else if (!strcmp(res->filter_type, "oip"))
+		tunnel_filter_conf.filter_type = ETH_TUNNEL_FILTER_OIP;
+	else if (!strcmp(res->filter_type, "iip"))
+		tunnel_filter_conf.filter_type = ETH_TUNNEL_FILTER_IIP;
 	else {
 		printf("The filter type is not supported");
 		return;
@@ -6676,6 +6714,8 @@ cmd_tunnel_filter_parsed(void *parsed_result,
 		tunnel_filter_conf.tunnel_type = RTE_TUNNEL_TYPE_VXLAN;
 	else if (!strcmp(res->tunnel_type, "nvgre"))
 		tunnel_filter_conf.tunnel_type = RTE_TUNNEL_TYPE_NVGRE;
+	else if (!strcmp(res->tunnel_type, "ipingre"))
+		tunnel_filter_conf.tunnel_type = RTE_TUNNEL_TYPE_IP_IN_GRE;
 	else {
 		printf("The tunnel type %s not supported.\n", res->tunnel_type);
 		return;
@@ -6721,11 +6761,11 @@ cmdline_parse_token_ipaddr_t cmd_tunnel_filter_ip_value =
 	ip_value);
 cmdline_parse_token_string_t cmd_tunnel_filter_tunnel_type =
 	TOKEN_STRING_INITIALIZER(struct cmd_tunnel_filter_result,
-	tunnel_type, "vxlan#nvgre");
+	tunnel_type, "vxlan#nvgre#ipingre");
 
 cmdline_parse_token_string_t cmd_tunnel_filter_filter_type =
 	TOKEN_STRING_INITIALIZER(struct cmd_tunnel_filter_result,
-	filter_type, "imac-ivlan#imac-ivlan-tenid#imac-tenid#"
+	filter_type, "oip#iip#imac-ivlan#imac-ivlan-tenid#imac-tenid#"
 		"imac#omac-imac-tenid");
 cmdline_parse_token_num_t cmd_tunnel_filter_tenant_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_tunnel_filter_result,
@@ -6739,8 +6779,8 @@ cmdline_parse_inst_t cmd_tunnel_filter = {
 	.data = (void *)0,
 	.help_str = "add/rm tunnel filter of a port: "
 			"tunnel_filter add port_id outer_mac inner_mac ip "
-			"inner_vlan tunnel_type(vxlan|nvgre) filter_type "
-			"(imac-ivlan|imac-ivlan-tenid|imac-tenid|"
+			"inner_vlan tunnel_type(vxlan|nvgre|ipingre) filter_type "
+			"(oip|iip|imac-ivlan|imac-ivlan-tenid|imac-tenid|"
 			"imac|omac-imac-tenid) "
 			"tenant_id queue_num",
 	.tokens = {
@@ -6782,9 +6822,11 @@ cmd_tunnel_udp_config_parsed(void *parsed_result,
 		tunnel_udp.prot_type = RTE_TUNNEL_TYPE_VXLAN;
 
 	if (!strcmp(res->what, "add"))
-		ret = rte_eth_dev_udp_tunnel_add(res->port_id, &tunnel_udp);
+		ret = rte_eth_dev_udp_tunnel_port_add(res->port_id,
+						      &tunnel_udp);
 	else
-		ret = rte_eth_dev_udp_tunnel_delete(res->port_id, &tunnel_udp);
+		ret = rte_eth_dev_udp_tunnel_port_delete(res->port_id,
+							 &tunnel_udp);
 
 	if (ret < 0)
 		printf("udp tunneling add error: (%s)\n", strerror(-ret));
@@ -8689,13 +8731,13 @@ cmd_flow_director_mask_parsed(void *parsed_result,
 			return;
 		}
 
-		mask->vlan_tci_mask = res->vlan_mask;
+		mask->vlan_tci_mask = rte_cpu_to_be_16(res->vlan_mask);
 		IPV4_ADDR_TO_UINT(res->ipv4_src, mask->ipv4_mask.src_ip);
 		IPV4_ADDR_TO_UINT(res->ipv4_dst, mask->ipv4_mask.dst_ip);
 		IPV6_ADDR_TO_ARRAY(res->ipv6_src, mask->ipv6_mask.src_ip);
 		IPV6_ADDR_TO_ARRAY(res->ipv6_dst, mask->ipv6_mask.dst_ip);
-		mask->src_port_mask = res->port_src;
-		mask->dst_port_mask = res->port_dst;
+		mask->src_port_mask = rte_cpu_to_be_16(res->port_src);
+		mask->dst_port_mask = rte_cpu_to_be_16(res->port_dst);
 	}
 
 	cmd_reconfig_device_queue(res->port_id, 1, 1);
@@ -9632,6 +9674,667 @@ cmdline_parse_inst_t cmd_mcast_addr = {
 	},
 };
 
+/* l2 tunnel config
+ * only support E-tag now.
+ */
+
+/* Ether type config */
+struct cmd_config_l2_tunnel_eth_type_result {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t config;
+	cmdline_fixed_string_t all;
+	uint8_t id;
+	cmdline_fixed_string_t l2_tunnel;
+	cmdline_fixed_string_t l2_tunnel_type;
+	cmdline_fixed_string_t eth_type;
+	uint16_t eth_type_val;
+};
+
+cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_port =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 port, "port");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_config =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 config, "config");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_all_str =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 all, "all");
+cmdline_parse_token_num_t cmd_config_l2_tunnel_eth_type_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 id, UINT8);
+cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_l2_tunnel =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 l2_tunnel, "l2-tunnel");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_l2_tunnel_type =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 l2_tunnel_type, "E-tag");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_eth_type_eth_type =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 eth_type, "ether-type");
+cmdline_parse_token_num_t cmd_config_l2_tunnel_eth_type_eth_type_val =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_l2_tunnel_eth_type_result,
+		 eth_type_val, UINT16);
+
+static uint32_t
+str2fdir_l2_tunnel_type(char *string)
+{
+	uint32_t i = 0;
+
+	static const struct {
+		char str[32];
+		uint32_t type;
+	} l2_tunnel_type_str[] = {
+		{"E-tag", RTE_L2_TUNNEL_TYPE_E_TAG},
+	};
+
+	for (i = 0; i < RTE_DIM(l2_tunnel_type_str); i++) {
+		if (!strcmp(l2_tunnel_type_str[i].str, string))
+			return l2_tunnel_type_str[i].type;
+	}
+	return RTE_TUNNEL_TYPE_NONE;
+}
+
+/* ether type config for all ports */
+static void
+cmd_config_l2_tunnel_eth_type_all_parsed
+	(void *parsed_result,
+	 __attribute__((unused)) struct cmdline *cl,
+	 __attribute__((unused)) void *data)
+{
+	struct cmd_config_l2_tunnel_eth_type_result *res = parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+	portid_t pid;
+
+	entry.l2_tunnel_type = str2fdir_l2_tunnel_type(res->l2_tunnel_type);
+	entry.ether_type = res->eth_type_val;
+
+	FOREACH_PORT(pid, ports) {
+		rte_eth_dev_l2_tunnel_eth_type_conf(pid, &entry);
+	}
+}
+
+cmdline_parse_inst_t cmd_config_l2_tunnel_eth_type_all = {
+	.f = cmd_config_l2_tunnel_eth_type_all_parsed,
+	.data = NULL,
+	.help_str = "port config all l2-tunnel ether-type",
+	.tokens = {
+		(void *)&cmd_config_l2_tunnel_eth_type_port,
+		(void *)&cmd_config_l2_tunnel_eth_type_config,
+		(void *)&cmd_config_l2_tunnel_eth_type_all_str,
+		(void *)&cmd_config_l2_tunnel_eth_type_l2_tunnel,
+		(void *)&cmd_config_l2_tunnel_eth_type_l2_tunnel_type,
+		(void *)&cmd_config_l2_tunnel_eth_type_eth_type,
+		(void *)&cmd_config_l2_tunnel_eth_type_eth_type_val,
+		NULL,
+	},
+};
+
+/* ether type config for a specific port */
+static void
+cmd_config_l2_tunnel_eth_type_specific_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_l2_tunnel_eth_type_result *res =
+		 parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+
+	if (port_id_is_invalid(res->id, ENABLED_WARN))
+		return;
+
+	entry.l2_tunnel_type = str2fdir_l2_tunnel_type(res->l2_tunnel_type);
+	entry.ether_type = res->eth_type_val;
+
+	rte_eth_dev_l2_tunnel_eth_type_conf(res->id, &entry);
+}
+
+cmdline_parse_inst_t cmd_config_l2_tunnel_eth_type_specific = {
+	.f = cmd_config_l2_tunnel_eth_type_specific_parsed,
+	.data = NULL,
+	.help_str = "port config l2-tunnel ether-type",
+	.tokens = {
+		(void *)&cmd_config_l2_tunnel_eth_type_port,
+		(void *)&cmd_config_l2_tunnel_eth_type_config,
+		(void *)&cmd_config_l2_tunnel_eth_type_id,
+		(void *)&cmd_config_l2_tunnel_eth_type_l2_tunnel,
+		(void *)&cmd_config_l2_tunnel_eth_type_l2_tunnel_type,
+		(void *)&cmd_config_l2_tunnel_eth_type_eth_type,
+		(void *)&cmd_config_l2_tunnel_eth_type_eth_type_val,
+		NULL,
+	},
+};
+
+/* Enable/disable l2 tunnel */
+struct cmd_config_l2_tunnel_en_dis_result {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t config;
+	cmdline_fixed_string_t all;
+	uint8_t id;
+	cmdline_fixed_string_t l2_tunnel;
+	cmdline_fixed_string_t l2_tunnel_type;
+	cmdline_fixed_string_t en_dis;
+};
+
+cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_port =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_en_dis_result,
+		 port, "port");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_config =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_en_dis_result,
+		 config, "config");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_all_str =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_en_dis_result,
+		 all, "all");
+cmdline_parse_token_num_t cmd_config_l2_tunnel_en_dis_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_l2_tunnel_en_dis_result,
+		 id, UINT8);
+cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_l2_tunnel =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_en_dis_result,
+		 l2_tunnel, "l2-tunnel");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_l2_tunnel_type =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_en_dis_result,
+		 l2_tunnel_type, "E-tag");
+cmdline_parse_token_string_t cmd_config_l2_tunnel_en_dis_en_dis =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_l2_tunnel_en_dis_result,
+		 en_dis, "enable#disable");
+
+/* enable/disable l2 tunnel for all ports */
+static void
+cmd_config_l2_tunnel_en_dis_all_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_l2_tunnel_en_dis_result *res = parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+	portid_t pid;
+	uint8_t en;
+
+	entry.l2_tunnel_type = str2fdir_l2_tunnel_type(res->l2_tunnel_type);
+
+	if (!strcmp("enable", res->en_dis))
+		en = 1;
+	else
+		en = 0;
+
+	FOREACH_PORT(pid, ports) {
+		rte_eth_dev_l2_tunnel_offload_set(pid,
+						  &entry,
+						  ETH_L2_TUNNEL_ENABLE_MASK,
+						  en);
+	}
+}
+
+cmdline_parse_inst_t cmd_config_l2_tunnel_en_dis_all = {
+	.f = cmd_config_l2_tunnel_en_dis_all_parsed,
+	.data = NULL,
+	.help_str = "port config all l2-tunnel enable/disable",
+	.tokens = {
+		(void *)&cmd_config_l2_tunnel_en_dis_port,
+		(void *)&cmd_config_l2_tunnel_en_dis_config,
+		(void *)&cmd_config_l2_tunnel_en_dis_all_str,
+		(void *)&cmd_config_l2_tunnel_en_dis_l2_tunnel,
+		(void *)&cmd_config_l2_tunnel_en_dis_l2_tunnel_type,
+		(void *)&cmd_config_l2_tunnel_en_dis_en_dis,
+		NULL,
+	},
+};
+
+/* enable/disable l2 tunnel for a port */
+static void
+cmd_config_l2_tunnel_en_dis_specific_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_l2_tunnel_en_dis_result *res =
+		parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+
+	if (port_id_is_invalid(res->id, ENABLED_WARN))
+		return;
+
+	entry.l2_tunnel_type = str2fdir_l2_tunnel_type(res->l2_tunnel_type);
+
+	if (!strcmp("enable", res->en_dis))
+		rte_eth_dev_l2_tunnel_offload_set(res->id,
+						  &entry,
+						  ETH_L2_TUNNEL_ENABLE_MASK,
+						  1);
+	else
+		rte_eth_dev_l2_tunnel_offload_set(res->id,
+						  &entry,
+						  ETH_L2_TUNNEL_ENABLE_MASK,
+						  0);
+}
+
+cmdline_parse_inst_t cmd_config_l2_tunnel_en_dis_specific = {
+	.f = cmd_config_l2_tunnel_en_dis_specific_parsed,
+	.data = NULL,
+	.help_str = "port config l2-tunnel enable/disable",
+	.tokens = {
+		(void *)&cmd_config_l2_tunnel_en_dis_port,
+		(void *)&cmd_config_l2_tunnel_en_dis_config,
+		(void *)&cmd_config_l2_tunnel_en_dis_id,
+		(void *)&cmd_config_l2_tunnel_en_dis_l2_tunnel,
+		(void *)&cmd_config_l2_tunnel_en_dis_l2_tunnel_type,
+		(void *)&cmd_config_l2_tunnel_en_dis_en_dis,
+		NULL,
+	},
+};
+
+/* E-tag configuration */
+
+/* Common result structure for all E-tag configuration */
+struct cmd_config_e_tag_result {
+	cmdline_fixed_string_t e_tag;
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t insertion;
+	cmdline_fixed_string_t stripping;
+	cmdline_fixed_string_t forwarding;
+	cmdline_fixed_string_t filter;
+	cmdline_fixed_string_t add;
+	cmdline_fixed_string_t del;
+	cmdline_fixed_string_t on;
+	cmdline_fixed_string_t off;
+	cmdline_fixed_string_t on_off;
+	cmdline_fixed_string_t port_tag_id;
+	uint32_t port_tag_id_val;
+	cmdline_fixed_string_t e_tag_id;
+	uint16_t e_tag_id_val;
+	cmdline_fixed_string_t dst_pool;
+	uint8_t dst_pool_val;
+	cmdline_fixed_string_t port;
+	uint8_t port_id;
+	cmdline_fixed_string_t vf;
+	uint8_t vf_id;
+};
+
+/* Common CLI fields for all E-tag configuration */
+cmdline_parse_token_string_t cmd_config_e_tag_e_tag =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 e_tag, "E-tag");
+cmdline_parse_token_string_t cmd_config_e_tag_set =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 set, "set");
+cmdline_parse_token_string_t cmd_config_e_tag_insertion =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 insertion, "insertion");
+cmdline_parse_token_string_t cmd_config_e_tag_stripping =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 stripping, "stripping");
+cmdline_parse_token_string_t cmd_config_e_tag_forwarding =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 forwarding, "forwarding");
+cmdline_parse_token_string_t cmd_config_e_tag_filter =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 filter, "filter");
+cmdline_parse_token_string_t cmd_config_e_tag_add =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 add, "add");
+cmdline_parse_token_string_t cmd_config_e_tag_del =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 del, "del");
+cmdline_parse_token_string_t cmd_config_e_tag_on =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 on, "on");
+cmdline_parse_token_string_t cmd_config_e_tag_off =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 off, "off");
+cmdline_parse_token_string_t cmd_config_e_tag_on_off =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 on_off, "on#off");
+cmdline_parse_token_string_t cmd_config_e_tag_port_tag_id =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 port_tag_id, "port-tag-id");
+cmdline_parse_token_num_t cmd_config_e_tag_port_tag_id_val =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 port_tag_id_val, UINT32);
+cmdline_parse_token_string_t cmd_config_e_tag_e_tag_id =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 e_tag_id, "e-tag-id");
+cmdline_parse_token_num_t cmd_config_e_tag_e_tag_id_val =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 e_tag_id_val, UINT16);
+cmdline_parse_token_string_t cmd_config_e_tag_dst_pool =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 dst_pool, "dst-pool");
+cmdline_parse_token_num_t cmd_config_e_tag_dst_pool_val =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 dst_pool_val, UINT8);
+cmdline_parse_token_string_t cmd_config_e_tag_port =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 port, "port");
+cmdline_parse_token_num_t cmd_config_e_tag_port_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 port_id, UINT8);
+cmdline_parse_token_string_t cmd_config_e_tag_vf =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 vf, "vf");
+cmdline_parse_token_num_t cmd_config_e_tag_vf_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_config_e_tag_result,
+		 vf_id, UINT8);
+
+/* E-tag insertion configuration */
+static void
+cmd_config_e_tag_insertion_en_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_e_tag_result *res =
+		parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	entry.l2_tunnel_type = RTE_L2_TUNNEL_TYPE_E_TAG;
+	entry.tunnel_id = res->port_tag_id_val;
+	entry.vf_id = res->vf_id;
+	rte_eth_dev_l2_tunnel_offload_set(res->port_id,
+					  &entry,
+					  ETH_L2_TUNNEL_INSERTION_MASK,
+					  1);
+}
+
+static void
+cmd_config_e_tag_insertion_dis_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_e_tag_result *res =
+		parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	entry.l2_tunnel_type = RTE_L2_TUNNEL_TYPE_E_TAG;
+	entry.vf_id = res->vf_id;
+
+	rte_eth_dev_l2_tunnel_offload_set(res->port_id,
+					  &entry,
+					  ETH_L2_TUNNEL_INSERTION_MASK,
+					  0);
+}
+
+cmdline_parse_inst_t cmd_config_e_tag_insertion_en = {
+	.f = cmd_config_e_tag_insertion_en_parsed,
+	.data = NULL,
+	.help_str = "E-tag insertion enable",
+	.tokens = {
+		(void *)&cmd_config_e_tag_e_tag,
+		(void *)&cmd_config_e_tag_set,
+		(void *)&cmd_config_e_tag_insertion,
+		(void *)&cmd_config_e_tag_on,
+		(void *)&cmd_config_e_tag_port_tag_id,
+		(void *)&cmd_config_e_tag_port_tag_id_val,
+		(void *)&cmd_config_e_tag_port,
+		(void *)&cmd_config_e_tag_port_id,
+		(void *)&cmd_config_e_tag_vf,
+		(void *)&cmd_config_e_tag_vf_id,
+		NULL,
+	},
+};
+
+cmdline_parse_inst_t cmd_config_e_tag_insertion_dis = {
+	.f = cmd_config_e_tag_insertion_dis_parsed,
+	.data = NULL,
+	.help_str = "E-tag insertion disable",
+	.tokens = {
+		(void *)&cmd_config_e_tag_e_tag,
+		(void *)&cmd_config_e_tag_set,
+		(void *)&cmd_config_e_tag_insertion,
+		(void *)&cmd_config_e_tag_off,
+		(void *)&cmd_config_e_tag_port,
+		(void *)&cmd_config_e_tag_port_id,
+		(void *)&cmd_config_e_tag_vf,
+		(void *)&cmd_config_e_tag_vf_id,
+		NULL,
+	},
+};
+
+/* E-tag stripping configuration */
+static void
+cmd_config_e_tag_stripping_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_e_tag_result *res =
+		parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	entry.l2_tunnel_type = RTE_L2_TUNNEL_TYPE_E_TAG;
+
+	if (!strcmp(res->on_off, "on"))
+		rte_eth_dev_l2_tunnel_offload_set
+			(res->port_id,
+			 &entry,
+			 ETH_L2_TUNNEL_STRIPPING_MASK,
+			 1);
+	else
+		rte_eth_dev_l2_tunnel_offload_set
+			(res->port_id,
+			 &entry,
+			 ETH_L2_TUNNEL_STRIPPING_MASK,
+			 0);
+}
+
+cmdline_parse_inst_t cmd_config_e_tag_stripping_en_dis = {
+	.f = cmd_config_e_tag_stripping_parsed,
+	.data = NULL,
+	.help_str = "E-tag stripping enable/disable",
+	.tokens = {
+		(void *)&cmd_config_e_tag_e_tag,
+		(void *)&cmd_config_e_tag_set,
+		(void *)&cmd_config_e_tag_stripping,
+		(void *)&cmd_config_e_tag_on_off,
+		(void *)&cmd_config_e_tag_port,
+		(void *)&cmd_config_e_tag_port_id,
+		NULL,
+	},
+};
+
+/* E-tag forwarding configuration */
+static void
+cmd_config_e_tag_forwarding_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_e_tag_result *res = parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	entry.l2_tunnel_type = RTE_L2_TUNNEL_TYPE_E_TAG;
+
+	if (!strcmp(res->on_off, "on"))
+		rte_eth_dev_l2_tunnel_offload_set
+			(res->port_id,
+			 &entry,
+			 ETH_L2_TUNNEL_FORWARDING_MASK,
+			 1);
+	else
+		rte_eth_dev_l2_tunnel_offload_set
+			(res->port_id,
+			 &entry,
+			 ETH_L2_TUNNEL_FORWARDING_MASK,
+			 0);
+}
+
+cmdline_parse_inst_t cmd_config_e_tag_forwarding_en_dis = {
+	.f = cmd_config_e_tag_forwarding_parsed,
+	.data = NULL,
+	.help_str = "E-tag forwarding enable/disable",
+	.tokens = {
+		(void *)&cmd_config_e_tag_e_tag,
+		(void *)&cmd_config_e_tag_set,
+		(void *)&cmd_config_e_tag_forwarding,
+		(void *)&cmd_config_e_tag_on_off,
+		(void *)&cmd_config_e_tag_port,
+		(void *)&cmd_config_e_tag_port_id,
+		NULL,
+	},
+};
+
+/* E-tag filter configuration */
+static void
+cmd_config_e_tag_filter_add_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_e_tag_result *res = parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+	int ret = 0;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	if (res->e_tag_id_val > 0x3fff) {
+		printf("e-tag-id must be equal or less than 0x3fff.\n");
+		return;
+	}
+
+	ret = rte_eth_dev_filter_supported(res->port_id,
+					   RTE_ETH_FILTER_L2_TUNNEL);
+	if (ret < 0) {
+		printf("E-tag filter is not supported on port %u.\n",
+		       res->port_id);
+		return;
+	}
+
+	entry.l2_tunnel_type = RTE_L2_TUNNEL_TYPE_E_TAG;
+	entry.tunnel_id = res->e_tag_id_val;
+	entry.pool = res->dst_pool_val;
+
+	ret = rte_eth_dev_filter_ctrl(res->port_id,
+				      RTE_ETH_FILTER_L2_TUNNEL,
+				      RTE_ETH_FILTER_ADD,
+				      &entry);
+	if (ret < 0)
+		printf("E-tag filter programming error: (%s)\n",
+		       strerror(-ret));
+}
+
+cmdline_parse_inst_t cmd_config_e_tag_filter_add = {
+	.f = cmd_config_e_tag_filter_add_parsed,
+	.data = NULL,
+	.help_str = "E-tag filter add",
+	.tokens = {
+		(void *)&cmd_config_e_tag_e_tag,
+		(void *)&cmd_config_e_tag_set,
+		(void *)&cmd_config_e_tag_filter,
+		(void *)&cmd_config_e_tag_add,
+		(void *)&cmd_config_e_tag_e_tag_id,
+		(void *)&cmd_config_e_tag_e_tag_id_val,
+		(void *)&cmd_config_e_tag_dst_pool,
+		(void *)&cmd_config_e_tag_dst_pool_val,
+		(void *)&cmd_config_e_tag_port,
+		(void *)&cmd_config_e_tag_port_id,
+		NULL,
+	},
+};
+
+static void
+cmd_config_e_tag_filter_del_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_config_e_tag_result *res = parsed_result;
+	struct rte_eth_l2_tunnel_conf entry;
+	int ret = 0;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+	if (res->e_tag_id_val > 0x3fff) {
+		printf("e-tag-id must be less than 0x3fff.\n");
+		return;
+	}
+
+	ret = rte_eth_dev_filter_supported(res->port_id,
+					   RTE_ETH_FILTER_L2_TUNNEL);
+	if (ret < 0) {
+		printf("E-tag filter is not supported on port %u.\n",
+		       res->port_id);
+		return;
+	}
+
+	entry.l2_tunnel_type = RTE_L2_TUNNEL_TYPE_E_TAG;
+	entry.tunnel_id = res->e_tag_id_val;
+
+	ret = rte_eth_dev_filter_ctrl(res->port_id,
+				      RTE_ETH_FILTER_L2_TUNNEL,
+				      RTE_ETH_FILTER_DELETE,
+				      &entry);
+	if (ret < 0)
+		printf("E-tag filter programming error: (%s)\n",
+		       strerror(-ret));
+}
+
+cmdline_parse_inst_t cmd_config_e_tag_filter_del = {
+	.f = cmd_config_e_tag_filter_del_parsed,
+	.data = NULL,
+	.help_str = "E-tag filter delete",
+	.tokens = {
+		(void *)&cmd_config_e_tag_e_tag,
+		(void *)&cmd_config_e_tag_set,
+		(void *)&cmd_config_e_tag_filter,
+		(void *)&cmd_config_e_tag_del,
+		(void *)&cmd_config_e_tag_e_tag_id,
+		(void *)&cmd_config_e_tag_e_tag_id_val,
+		(void *)&cmd_config_e_tag_port,
+		(void *)&cmd_config_e_tag_port_id,
+		NULL,
+	},
+};
+
 /* ******************************************************************************** */
 
 /* list of instructions */
@@ -9773,6 +10476,16 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_hash_input_set,
 	(cmdline_parse_inst_t *)&cmd_set_fdir_input_set,
 	(cmdline_parse_inst_t *)&cmd_mcast_addr,
+	(cmdline_parse_inst_t *)&cmd_config_l2_tunnel_eth_type_all,
+	(cmdline_parse_inst_t *)&cmd_config_l2_tunnel_eth_type_specific,
+	(cmdline_parse_inst_t *)&cmd_config_l2_tunnel_en_dis_all,
+	(cmdline_parse_inst_t *)&cmd_config_l2_tunnel_en_dis_specific,
+	(cmdline_parse_inst_t *)&cmd_config_e_tag_insertion_en,
+	(cmdline_parse_inst_t *)&cmd_config_e_tag_insertion_dis,
+	(cmdline_parse_inst_t *)&cmd_config_e_tag_stripping_en_dis,
+	(cmdline_parse_inst_t *)&cmd_config_e_tag_forwarding_en_dis,
+	(cmdline_parse_inst_t *)&cmd_config_e_tag_filter_add,
+	(cmdline_parse_inst_t *)&cmd_config_e_tag_filter_del,
 	NULL,
 };
 

@@ -498,9 +498,9 @@ Set the VLAN QinQ (extended queue in queue) on for a port::
 vlan set tpid
 ~~~~~~~~~~~~~
 
-Set the outer VLAN TPID for packet filtering on a port::
+Set the inner or outer VLAN TPID for packet filtering on a port::
 
-   testpmd> vlan set tpid (value) (port_id)
+   testpmd> vlan set (inner|outer) tpid (value) (port_id)
 
 .. note::
 
@@ -540,20 +540,43 @@ Remove a VLAN ID, from the set of VLAN identifiers filtered for VF(s) for port I
 
    testpmd> rx_vlan rm (vlan_id) port (port_id) vf (vf_mask)
 
-rx_vlan set tpid
-~~~~~~~~~~~~~~~~
-
-Set the outer VLAN TPID for packet filtering on a port::
-
-   testpmd> rx_vlan set tpid (value) (port_id)
-
 tunnel_filter add
 ~~~~~~~~~~~~~~~~~
 
 Add a tunnel filter on a port::
 
    testpmd> tunnel_filter add (port_id) (outer_mac) (inner_mac) (ip_addr) \
-            (inner_vlan) (tunnel_type) (filter_type) (tenant_id) (queue_id)
+            (inner_vlan) (vxlan|nvgre|ipingre) (imac-ivlan|imac-ivlan-tenid|\
+            imac-tenid|imac|omac-imac-tenid|oip|iip) (tenant_id) (queue_id)
+
+The available information categories are:
+
+* ``vxlan``: Set tunnel type as VXLAN.
+
+* ``nvgre``: Set tunnel type as NVGRE.
+
+* ``ipingre``: Set tunnel type as IP-in-GRE.
+
+* ``imac-ivlan``: Set filter type as Inner MAC and VLAN.
+
+* ``imac-ivlan-tenid``: Set filter type as Inner MAC, VLAN and tenant ID.
+
+* ``imac-tenid``: Set filter type as Inner MAC and tenant ID.
+
+* ``imac``: Set filter type as Inner MAC.
+
+* ``omac-imac-tenid``: Set filter type as Outer MAC, Inner MAC and tenant ID.
+
+* ``oip``: Set filter type as Outer IP.
+
+* ``iip``: Set filter type as Inner IP.
+
+Example::
+
+   testpmd> tunnel_filter add 0 68:05:CA:28:09:82 00:00:00:00:00:00 \
+            192.168.2.2 0 ipingre oip 1 1
+
+   Set an IP-in-GRE tunnel on port 0, and the filter type is Outer IP.
 
 tunnel_filter remove
 ~~~~~~~~~~~~~~~~~~~~
@@ -561,7 +584,8 @@ tunnel_filter remove
 Remove a tunnel filter on a port::
 
    testpmd> tunnel_filter rm (port_id) (outer_mac) (inner_mac) (ip_addr) \
-            (inner_vlan) (tunnel_type) (filter_type) (tenant_id) (queue_id)
+            (inner_vlan) (vxlan|nvgre|ipingre) (imac-ivlan|imac-ivlan-tenid|\
+            imac-tenid|imac|omac-imac-tenid|oip|iip) (tenant_id) (queue_id)
 
 rx_vxlan_port add
 ~~~~~~~~~~~~~~~~~
@@ -917,6 +941,32 @@ Set link down for a port::
 
    testpmd> set link-down port (port id)
 
+E-tag set
+~~~~~~~~~
+
+Enable E-tag insertion for a VF on a port::
+
+   testpmd> E-tag set insertion on port-tag-id (value) port (port_id) vf (vf_id)
+
+Disable E-tag insertion for a VF on a port::
+
+   testpmd> E-tag set insertion off port (port_id) vf (vf_id)
+
+Enable/disable E-tag stripping on a port::
+
+   testpmd> E-tag set stripping (on|off) port (port_id)
+
+Enable/disable E-tag based forwarding on a port::
+
+   testpmd> E-tag set forwarding (on|off) port (port_id)
+
+Add an E-tag forwarding filter on a port::
+
+   testpmd> E-tag set filter add e-tag-id (value) dst-pool (pool_id) port (port_id)
+
+Delete an E-tag forwarding filter on a port::
+   testpmd> E-tag set filter del e-tag-id (value) port (port_id)
+
 
 Port Functions
 --------------
@@ -1267,6 +1317,17 @@ Where the threshold type can be:
 * ``txrst:`` Set the transmit RS bit threshold of TX rings, 0 <= value <= txd.
 
 These threshold options are also available from the command-line.
+
+port config - E-tag
+~~~~~~~~~~~~~~~~~~~
+
+Set the value of ether-type for E-tag::
+
+   testpmd> port config (port_id|all) l2-tunnel E-tag ether-type (value)
+
+Enable/disable the E-tag support::
+
+   testpmd> port config (port_id|all) l2-tunnel E-tag (enable|disable)
 
 
 Link Bonding Functions

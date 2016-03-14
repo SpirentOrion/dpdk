@@ -66,12 +66,16 @@ TOOLCHAIN_ASFLAGS =
 TOOLCHAIN_CFLAGS =
 TOOLCHAIN_LDFLAGS =
 
-WERROR_FLAGS := -W -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes
+WERROR_FLAGS := -W -Wall -Wstrict-prototypes -Wmissing-prototypes
 WERROR_FLAGS += -Wmissing-declarations -Wold-style-definition -Wpointer-arith
 WERROR_FLAGS += -Wnested-externs -Wcast-qual
 WERROR_FLAGS += -Wformat-nonliteral -Wformat-security
 WERROR_FLAGS += -Wundef -Wwrite-strings
 WERROR_FLAGS += -Wno-error=unused-command-line-argument
+
+ifeq ($(RTE_DEVEL_BUILD),y)
+WERROR_FLAGS += -Werror
+endif
 
 # process cpu flags
 include $(RTE_SDK)/mk/toolchain/$(RTE_TOOLCHAIN)/rte.toolchain-compat.mk

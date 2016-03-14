@@ -329,7 +329,7 @@ int virtio_dev_queue_setup(struct rte_eth_dev *dev,
 	}
 	if (vq == NULL) {
 		PMD_INIT_LOG(ERR, "%s: Can not allocate virtqueue", __func__);
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 	if (queue_type == VTNET_RQ && vq->sw_ring == NULL) {
 		PMD_INIT_LOG(ERR, "%s: Can not allocate RX soft ring",
@@ -1015,6 +1015,7 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 	struct virtio_net_config *config;
 	struct virtio_net_config local_config;
 	struct rte_pci_device *pci_dev;
+	int ret;
 
 	RTE_BUILD_BUG_ON(RTE_PKTMBUF_HEADROOM < sizeof(struct virtio_net_hdr));
 
@@ -1037,8 +1038,9 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 
 	pci_dev = eth_dev->pci_dev;
 
-	if (vtpci_init(pci_dev, hw) < 0)
-		return -1;
+	ret = vtpci_init(pci_dev, hw);
+	if (ret)
+		return ret;
 
 	/* Reset the device although not necessary at startup */
 	vtpci_reset(hw);
@@ -1229,7 +1231,7 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 
 	if (rxmode->hw_ip_checksum) {
 		PMD_DRV_LOG(ERR, "HW IP checksum not supported");
-		return (-EINVAL);
+		return -EINVAL;
 	}
 
 	hw->vlan_strip = rxmode->hw_vlan_strip;

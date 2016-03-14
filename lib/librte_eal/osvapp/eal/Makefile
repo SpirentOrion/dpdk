@@ -59,6 +59,10 @@ INC_FLAGS += -I$(OSV_SDK)/include
 CFLAGS += $(INC_FLAGS) $(WERROR_FLAGS) -O3
 CXXFLAGS += $(INC_FLAGS) -std=gnu++11 -O3
 
+LDLIBS += -ldl
+LDLIBS += -lpthread
+LDLIBS += -lgcc_s
+
 # specific to osvapp exec-env
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) := eal.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_hugepage_info.cc

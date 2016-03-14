@@ -78,12 +78,6 @@
 		PKT_TX_L4_MASK |		 \
 		PKT_TX_OUTER_IP_CKSUM)
 
-#define RTE_MBUF_DATA_DMA_ADDR_DEFAULT(mb) \
-	(uint64_t) ((mb)->buf_physaddr + RTE_PKTMBUF_HEADROOM)
-
-#define RTE_MBUF_DATA_DMA_ADDR(mb) \
-	((uint64_t)((mb)->buf_physaddr + (mb)->data_off))
-
 static uint16_t i40e_xmit_pkts_simple(void *tx_queue,
 				      struct rte_mbuf **tx_pkts,
 				      uint16_t nb_pkts);
@@ -198,7 +192,7 @@ i40e_get_iee15888_flags(struct rte_mbuf *mb, uint64_t qword)
 static inline uint32_t
 i40e_rxd_pkt_type_mapping(uint8_t ptype)
 {
-	static const uint32_t ptype_table[UINT8_MAX] __rte_cache_aligned = {
+	static const uint32_t type_table[UINT8_MAX + 1] __rte_cache_aligned = {
 		/* L2 types */
 		/* [0] reserved */
 		[1] = RTE_PTYPE_L2_ETHER,
@@ -724,7 +718,7 @@ i40e_rxd_pkt_type_mapping(uint8_t ptype)
 		/* All others reserved */
 	};
 
-	return ptype_table[ptype];
+	return type_table[ptype];
 }
 
 #define I40E_RX_DESC_EXT_STATUS_FLEXBH_MASK   0x03
@@ -1098,7 +1092,7 @@ i40e_rx_alloc_bufs(struct i40e_rx_queue *rxq)
 		mb->nb_segs = 1;
 		mb->port = rxq->port_id;
 		dma_addr = rte_cpu_to_le_64(\
-			RTE_MBUF_DATA_DMA_ADDR_DEFAULT(mb));
+			rte_mbuf_data_dma_addr_default(mb));
 		rxdp[i].read.hdr_addr = 0;
 		rxdp[i].read.pkt_addr = dma_addr;
 	}
@@ -1245,7 +1239,7 @@ i40e_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		rxm = rxe->mbuf;
 		rxe->mbuf = nmb;
 		dma_addr =
-			rte_cpu_to_le_64(RTE_MBUF_DATA_DMA_ADDR_DEFAULT(nmb));
+			rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(nmb));
 		rxdp->read.hdr_addr = 0;
 		rxdp->read.pkt_addr = dma_addr;
 
@@ -1356,7 +1350,7 @@ i40e_recv_scattered_pkts(void *rx_queue,
 		rxm = rxe->mbuf;
 		rxe->mbuf = nmb;
 		dma_addr =
-			rte_cpu_to_le_64(RTE_MBUF_DATA_DMA_ADDR_DEFAULT(nmb));
+			rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(nmb));
 
 		/* Set data buffer address and data length of the mbuf */
 		rxdp->read.hdr_addr = 0;
@@ -1483,7 +1477,7 @@ i40e_calc_context_desc(uint64_t flags)
 	mask |= PKT_TX_IEEE1588_TMST;
 #endif
 
-	return ((flags & mask) ? 1 : 0);
+	return (flags & mask) ? 1 : 0;
 }
 
 /* set i40e TSO context descriptor */
@@ -1691,7 +1685,7 @@ i40e_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 
 			/* Setup TX Descriptor */
 			slen = m_seg->data_len;
-			buf_dma_addr = RTE_MBUF_DATA_DMA_ADDR(m_seg);
+			buf_dma_addr = rte_mbuf_data_dma_addr(m_seg);
 
 			PMD_TX_LOG(DEBUG, "mbuf: %p, TDD[%u]:\n"
 				"buf_dma_addr: %#"PRIx64";\n"
@@ -1790,7 +1784,7 @@ tx4(volatile struct i40e_tx_desc *txdp, struct rte_mbuf **pkts)
 	uint32_t i;
 
 	for (i = 0; i < 4; i++, txdp++, pkts++) {
-		dma_addr = RTE_MBUF_DATA_DMA_ADDR(*pkts);
+		dma_addr = rte_mbuf_data_dma_addr(*pkts);
 		txdp->buffer_addr = rte_cpu_to_le_64(dma_addr);
 		txdp->cmd_type_offset_bsz =
 			i40e_build_ctob((uint32_t)I40E_TD_CMD, 0,
@@ -1804,7 +1798,7 @@ tx1(volatile struct i40e_tx_desc *txdp, struct rte_mbuf **pkts)
 {
 	uint64_t dma_addr;
 
-	dma_addr = RTE_MBUF_DATA_DMA_ADDR(*pkts);
+	dma_addr = rte_mbuf_data_dma_addr(*pkts);
 	txdp->buffer_addr = rte_cpu_to_le_64(dma_addr);
 	txdp->cmd_type_offset_bsz =
 		i40e_build_ctob((uint32_t)I40E_TD_CMD, 0,
@@ -2147,7 +2141,7 @@ i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	if (!rxq) {
 		PMD_DRV_LOG(ERR, "Failed to allocate memory for "
 			    "rx queue data structure");
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 	rxq->mp = mp;
 	rxq->nb_rx_desc = nb_desc;
@@ -2174,7 +2168,7 @@ i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	if (!rz) {
 		i40e_dev_rx_queue_release(rxq);
 		PMD_DRV_LOG(ERR, "Failed to reserve DMA memory for RX");
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	/* Zero all the descriptors in the ring. */
@@ -2198,7 +2192,7 @@ i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	if (!rxq->sw_ring) {
 		i40e_dev_rx_queue_release(rxq);
 		PMD_DRV_LOG(ERR, "Failed to allocate memory for SW ring");
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	i40e_reset_rx_queue(rxq);
@@ -2437,7 +2431,7 @@ i40e_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	if (!txq) {
 		PMD_DRV_LOG(ERR, "Failed to allocate memory for "
 			    "tx queue structure");
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	/* Allocate TX hardware ring descriptors. */
@@ -2448,7 +2442,7 @@ i40e_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	if (!tz) {
 		i40e_dev_tx_queue_release(txq);
 		PMD_DRV_LOG(ERR, "Failed to reserve DMA memory for TX");
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	txq->nb_tx_desc = nb_desc;
@@ -2481,7 +2475,7 @@ i40e_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	if (!txq->sw_ring) {
 		i40e_dev_tx_queue_release(txq);
 		PMD_DRV_LOG(ERR, "Failed to allocate memory for SW TX ring");
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	i40e_reset_tx_queue(txq);
@@ -2741,7 +2735,7 @@ i40e_alloc_rx_queue_mbufs(struct i40e_rx_queue *rxq)
 		mbuf->port = rxq->port_id;
 
 		dma_addr =
-			rte_cpu_to_le_64(RTE_MBUF_DATA_DMA_ADDR_DEFAULT(mbuf));
+			rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(mbuf));
 
 		rxd = &rxq->rx_ring[i];
 		rxd->read.pkt_addr = dma_addr;

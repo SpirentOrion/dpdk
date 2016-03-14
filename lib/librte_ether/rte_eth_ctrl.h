@@ -89,6 +89,7 @@ enum rte_filter_type {
 	RTE_ETH_FILTER_TUNNEL,
 	RTE_ETH_FILTER_FDIR,
 	RTE_ETH_FILTER_HASH,
+	RTE_ETH_FILTER_L2_TUNNEL,
 	RTE_ETH_FILTER_MAX
 };
 
@@ -244,6 +245,8 @@ enum rte_eth_tunnel_type {
 	RTE_TUNNEL_TYPE_GENEVE,
 	RTE_TUNNEL_TYPE_TEREDO,
 	RTE_TUNNEL_TYPE_NVGRE,
+	RTE_TUNNEL_TYPE_IP_IN_GRE,
+	RTE_L2_TUNNEL_TYPE_E_TAG,
 	RTE_TUNNEL_TYPE_MAX,
 };
 
@@ -280,8 +283,8 @@ enum rte_tunnel_iptype {
  * Tunneling Packet filter configuration.
  */
 struct rte_eth_tunnel_filter_conf {
-	struct ether_addr *outer_mac;  /**< Outer MAC address filter. */
-	struct ether_addr *inner_mac;  /**< Inner MAC address filter. */
+	struct ether_addr outer_mac;  /**< Outer MAC address filter. */
+	struct ether_addr inner_mac;  /**< Inner MAC address filter. */
 	uint16_t inner_vlan;           /**< Inner VLAN filter. */
 	enum rte_tunnel_iptype ip_type; /**< IP address type. */
 	union {
@@ -501,6 +504,7 @@ struct rte_eth_tunnel_flow {
 
 /**
  * An union contains the inputs for all types of flow
+ * Items in flows need to be in big endian
  */
 union rte_eth_fdir_flow {
 	struct rte_eth_l2_flow     l2_flow;
@@ -588,14 +592,22 @@ struct rte_eth_fdir_filter {
  *  to match the various fields of RX packet headers.
  */
 struct rte_eth_fdir_masks {
-	uint16_t vlan_tci_mask;
+	uint16_t vlan_tci_mask;   /**< Bit mask for vlan_tci in big endian */
+	/** Bit mask for ipv4 flow in big endian. */
 	struct rte_eth_ipv4_flow   ipv4_mask;
+	/** Bit maks for ipv6 flow in big endian. */
 	struct rte_eth_ipv6_flow   ipv6_mask;
+	/** Bit mask for L4 source port in big endian. */
 	uint16_t src_port_mask;
+	/** Bit mask for L4 destination port in big endian. */
 	uint16_t dst_port_mask;
-	uint8_t mac_addr_byte_mask;  /** Per byte MAC address mask */
-	uint32_t tunnel_id_mask;  /** tunnel ID mask */
-	uint8_t tunnel_type_mask;
+	/** 6 bit mask for proper 6 bytes of Mac address, bit 0 matches the
+	    first byte on the wire */
+	uint8_t mac_addr_byte_mask;
+	/** Bit mask for tunnel ID in big endian. */
+	uint32_t tunnel_id_mask;
+	uint8_t tunnel_type_mask; /**< 1 - Match tunnel type,
+				       0 - Ignore tunnel type. */
 };
 
 /**
@@ -802,6 +814,17 @@ struct rte_eth_hash_filter_info {
 		/** Global configurations of hash filter input set */
 		struct rte_eth_input_set_conf input_set_conf;
 	} info;
+};
+
+/**
+ * l2 tunnel configuration.
+ */
+struct rte_eth_l2_tunnel_conf {
+	enum rte_eth_tunnel_type l2_tunnel_type;
+	uint16_t ether_type; /* ether type in l2 header */
+	uint32_t tunnel_id; /* port tag id for e-tag */
+	uint16_t vf_id; /* VF id for tag insertion */
+	uint32_t pool; /* destination pool for tag based forwarding */
 };
 
 #ifdef __cplusplus

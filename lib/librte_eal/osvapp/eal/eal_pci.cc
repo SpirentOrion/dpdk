@@ -69,7 +69,7 @@
 
 /**
  * @file
- * PCI probing under OSvB
+ * PCI probing under OSv
  *
  * This code probes the PCI bus via native OSv methods.
  */
@@ -389,6 +389,94 @@ rte_eal_pci_write_config(const struct rte_pci_device *device,
 	}
 
 	return 0;
+}
+
+int rte_eal_pci_ioport_map(struct rte_pci_device *dev, int bar,
+                           struct rte_pci_ioport *p)
+{
+        int ret = 0;
+
+        if (dev->mem_resource[bar].len != 0) {
+                p->dev = dev;
+                p->base = bar;  /* this is much more useful */
+        } else {
+                ret = -1;
+        }
+
+        return ret;
+}
+
+int rte_eal_pci_ioport_unmap(struct rte_pci_ioport *p __rte_unused)
+{
+        p->dev = nullptr;
+        p->base = 0;
+        return 0;
+}
+
+void rte_eal_pci_ioport_read(struct rte_pci_ioport *p,
+                        void *data, size_t len, off_t offset)
+{
+        if (p->dev == nullptr) {
+                return;
+        }
+
+        struct rte_intr_handle *intr_handle = &p->dev->intr_handle;
+        pci::device *device = static_cast<pci::device *>(intr_handle->device);
+        auto bar = device->get_bar(p->base + 1);
+        assert(bar != nullptr);
+        int size = 0;
+        uint32_t reg = offset;
+
+        for (uint8_t *d = static_cast<uint8_t *>(data);
+             len > 0;
+             d+= size, reg += size, len -= size) {
+                if (len >= 8) {
+                        size = 8;
+                        *(uint64_t *)d = bar->readq(reg);
+                } else if (len >= 4) {
+                        size = 4;
+                        *(uint32_t *)d = bar->readl(reg);
+                } else if (len >= 2) {
+                        size = 2;
+                        *(uint16_t *)d = bar->readw(reg);
+                } else {
+                        size = 1;
+                        *d = bar->readb(reg);
+                }
+        }
+}
+
+void rte_eal_pci_ioport_write(struct rte_pci_ioport *p,
+                        const void *data, size_t len, off_t offset)
+{
+        if (p->dev == nullptr) {
+                return;
+        }
+
+        struct rte_intr_handle *intr_handle = &p->dev->intr_handle;
+        pci::device *device = static_cast<pci::device *>(intr_handle->device);
+        auto bar = device->get_bar(p->base + 1);
+        assert(bar != nullptr);
+        int size = 0;
+        uint32_t reg = offset;
+
+        for (const uint8_t *s = static_cast<const uint8_t *>(data);
+             len > 0;
+             s+= size, reg += size, len -= size) {
+                if (len >= 8) {
+                        size = 8;
+                        bar->writeq(reg, *(reinterpret_cast<const uint64_t *>(s)));
+                } else if (len >= 4) {
+                        size = 4;
+                        bar->writel(reg, *(reinterpret_cast<const uint32_t *>(s)));
+                } else if (len >= 2) {
+                        size = 2;
+                        bar->writew(reg, *(reinterpret_cast<const uint16_t *>(s)));
+                } else {
+                        size = 1;
+                        bar->writeb(reg, *s);
+                }
+        }
 }
 
 /* Init the PCI EAL subsystem */

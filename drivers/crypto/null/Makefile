@@ -1,6 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2015 Intel Corporation. All rights reserved.
+#   Copyright(c) 2016 Intel Corporation. All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
 #   modification, are permitted provided that the following conditions
@@ -30,23 +30,30 @@
 
 include $(RTE_SDK)/mk/rte.vars.mk
 
+
 # library name
-LIB = librte_mbuf_offload.a
+LIB = librte_pmd_null_crypto.a
 
-CFLAGS += $(WERROR_FLAGS) -I$(SRCDIR) -O3
+# build flags
+CFLAGS += -O3
+CFLAGS += $(WERROR_FLAGS)
 
-EXPORT_MAP := rte_mbuf_offload_version.map
-
+# library version
 LIBABIVER := 1
 
-# all source are stored in SRCS-y
-SRCS-$(CONFIG_RTE_LIBRTE_MBUF_OFFLOAD) := rte_mbuf_offload.c
+# versioning export map
+EXPORT_MAP := rte_pmd_null_crypto_version.map
 
-# install includes
-SYMLINK-$(CONFIG_RTE_LIBRTE_MBUF_OFFLOAD)-include := rte_mbuf_offload.h
+# library source files
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_NULL_CRYPTO) += null_crypto_pmd.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_NULL_CRYPTO) += null_crypto_pmd_ops.c
 
-# this lib needs eal
-DEPDIRS-$(CONFIG_RTE_LIBRTE_MBUF_OFFLOAD) += lib/librte_mbuf
-DEPDIRS-$(CONFIG_RTE_LIBRTE_MBUF_OFFLOAD) += lib/librte_cryptodev
+# export include files
+SYMLINK-y-include +=
+
+# library dependencies
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_NULL_CRYPTO) += lib/librte_eal
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_NULL_CRYPTO) += lib/librte_mbuf
+DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_NULL_CRYPTO) += lib/librte_cryptodev
 
 include $(RTE_SDK)/mk/rte.lib.mk

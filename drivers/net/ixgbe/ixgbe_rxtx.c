@@ -85,7 +85,8 @@
 		PKT_TX_VLAN_PKT |		 \
 		PKT_TX_IP_CKSUM |		 \
 		PKT_TX_L4_MASK |		 \
-		PKT_TX_TCP_SEG)
+		PKT_TX_TCP_SEG |		 \
+		PKT_TX_OUTER_IP_CKSUM)
 
 static inline struct rte_mbuf *
 rte_rxmbuf_alloc(struct rte_mempool *mp)
@@ -94,7 +95,7 @@ rte_rxmbuf_alloc(struct rte_mempool *mp)
 
 	m = __rte_mbuf_raw_alloc(mp);
 	__rte_mbuf_sanity_check_raw(m, 0);
-	return (m);
+	return m;
 }
 
 
@@ -171,7 +172,7 @@ tx4(volatile union ixgbe_adv_tx_desc *txdp, struct rte_mbuf **pkts)
 	int i;
 
 	for (i = 0; i < 4; ++i, ++txdp, ++pkts) {
-		buf_dma_addr = RTE_MBUF_DATA_DMA_ADDR(*pkts);
+		buf_dma_addr = rte_mbuf_data_dma_addr(*pkts);
 		pkt_len = (*pkts)->data_len;
 
 		/* write data to descriptor */
@@ -194,7 +195,7 @@ tx1(volatile union ixgbe_adv_tx_desc *txdp, struct rte_mbuf **pkts)
 	uint64_t buf_dma_addr;
 	uint32_t pkt_len;
 
-	buf_dma_addr = RTE_MBUF_DATA_DMA_ADDR(*pkts);
+	buf_dma_addr = rte_mbuf_data_dma_addr(*pkts);
 	pkt_len = (*pkts)->data_len;
 
 	/* write data to descriptor */
@@ -364,9 +365,11 @@ ixgbe_set_xmit_ctx(struct ixgbe_tx_queue *txq,
 	uint32_t ctx_idx;
 	uint32_t vlan_macip_lens;
 	union ixgbe_tx_offload tx_offload_mask;
+	uint32_t seqnum_seed = 0;
 
 	ctx_idx = txq->ctx_curr;
-	tx_offload_mask.data = 0;
+	tx_offload_mask.data[0] = 0;
+	tx_offload_mask.data[1] = 0;
 	type_tucmd_mlhl = 0;
 
 	/* Specify which HW CTX to upload. */
@@ -430,18 +433,35 @@ ixgbe_set_xmit_ctx(struct ixgbe_tx_queue *txq,
 		}
 	}
 
+	if (ol_flags & PKT_TX_OUTER_IP_CKSUM) {
+		tx_offload_mask.outer_l2_len |= ~0;
+		tx_offload_mask.outer_l3_len |= ~0;
+		tx_offload_mask.l2_len |= ~0;
+		seqnum_seed |= tx_offload.outer_l3_len
+			       << IXGBE_ADVTXD_OUTER_IPLEN;
+		seqnum_seed |= tx_offload.l2_len
+			       << IXGBE_ADVTXD_TUNNEL_LEN;
+	}
+
 	txq->ctx_cache[ctx_idx].flags = ol_flags;
-	txq->ctx_cache[ctx_idx].tx_offload.data  =
-		tx_offload_mask.data & tx_offload.data;
+	txq->ctx_cache[ctx_idx].tx_offload.data[0]  =
+		tx_offload_mask.data[0] & tx_offload.data[0];
+	txq->ctx_cache[ctx_idx].tx_offload.data[1]  =
+		tx_offload_mask.data[1] & tx_offload.data[1];
 	txq->ctx_cache[ctx_idx].tx_offload_mask    = tx_offload_mask;
 
 	ctx_txd->type_tucmd_mlhl = rte_cpu_to_le_32(type_tucmd_mlhl);
 	vlan_macip_lens = tx_offload.l3_len;
-	vlan_macip_lens |= (tx_offload.l2_len << IXGBE_ADVTXD_MACLEN_SHIFT);
+	if (ol_flags & PKT_TX_OUTER_IP_CKSUM)
+		vlan_macip_lens |= (tx_offload.outer_l2_len <<
+				    IXGBE_ADVTXD_MACLEN_SHIFT);
+	else
+		vlan_macip_lens |= (tx_offload.l2_len <<
+				    IXGBE_ADVTXD_MACLEN_SHIFT);
 	vlan_macip_lens |= ((uint32_t)tx_offload.vlan_tci << IXGBE_ADVTXD_VLAN_SHIFT);
 	ctx_txd->vlan_macip_lens = rte_cpu_to_le_32(vlan_macip_lens);
 	ctx_txd->mss_l4len_idx   = rte_cpu_to_le_32(mss_l4len_idx);
-	ctx_txd->seqnum_seed     = 0;
+	ctx_txd->seqnum_seed     = seqnum_seed;
 }
 
 /*
@@ -454,21 +474,29 @@ what_advctx_update(struct ixgbe_tx_queue *txq, uint64_t flags,
 {
 	/* If match with the current used context */
 	if (likely((txq->ctx_cache[txq->ctx_curr].flags == flags) &&
-		(txq->ctx_cache[txq->ctx_curr].tx_offload.data ==
-		(txq->ctx_cache[txq->ctx_curr].tx_offload_mask.data & tx_offload.data)))) {
+		(txq->ctx_cache[txq->ctx_curr].tx_offload.data[0] ==
+		(txq->ctx_cache[txq->ctx_curr].tx_offload_mask.data[0]
+		 & tx_offload.data[0])) &&
+		(txq->ctx_cache[txq->ctx_curr].tx_offload.data[1] ==
+		(txq->ctx_cache[txq->ctx_curr].tx_offload_mask.data[1]
+		 & tx_offload.data[1])))) {
 			return txq->ctx_curr;
 	}
 
 	/* What if match with the next context  */
 	txq->ctx_curr ^= 1;
 	if (likely((txq->ctx_cache[txq->ctx_curr].flags == flags) &&
-		(txq->ctx_cache[txq->ctx_curr].tx_offload.data ==
-		(txq->ctx_cache[txq->ctx_curr].tx_offload_mask.data & tx_offload.data)))) {
+		(txq->ctx_cache[txq->ctx_curr].tx_offload.data[0] ==
+		(txq->ctx_cache[txq->ctx_curr].tx_offload_mask.data[0]
+		 & tx_offload.data[0])) &&
+		(txq->ctx_cache[txq->ctx_curr].tx_offload.data[1] ==
+		(txq->ctx_cache[txq->ctx_curr].tx_offload_mask.data[1]
+		 & tx_offload.data[1])))) {
 			return txq->ctx_curr;
 	}
 
 	/* Mismatch, use the previous context */
-	return (IXGBE_CTX_NUM);
+	return IXGBE_CTX_NUM;
 }
 
 static inline uint32_t
@@ -492,6 +520,8 @@ tx_desc_ol_flags_to_cmdtype(uint64_t ol_flags)
 		cmdtype |= IXGBE_ADVTXD_DCMD_VLE;
 	if (ol_flags & PKT_TX_TCP_SEG)
 		cmdtype |= IXGBE_ADVTXD_DCMD_TSE;
+	if (ol_flags & PKT_TX_OUTER_IP_CKSUM)
+		cmdtype |= (1 << IXGBE_ADVTXD_OUTERIPCS_SHIFT);
 	return cmdtype;
 }
 
@@ -561,7 +591,7 @@ ixgbe_xmit_cleanup(struct ixgbe_tx_queue *txq)
 	txq->nb_tx_free = (uint16_t)(txq->nb_tx_free + nb_tx_to_clean);
 
 	/* No Error */
-	return (0);
+	return 0;
 }
 
 uint16_t
@@ -588,8 +618,10 @@ ixgbe_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 	uint64_t tx_ol_req;
 	uint32_t ctx = 0;
 	uint32_t new_ctx;
-	union ixgbe_tx_offload tx_offload = {0};
+	union ixgbe_tx_offload tx_offload;
 
+	tx_offload.data[0] = 0;
+	tx_offload.data[1] = 0;
 	txq = tx_queue;
 	sw_ring = txq->sw_ring;
 	txr     = txq->tx_ring;
@@ -623,6 +655,8 @@ ixgbe_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 			tx_offload.l4_len = tx_pkt->l4_len;
 			tx_offload.vlan_tci = tx_pkt->vlan_tci;
 			tx_offload.tso_segsz = tx_pkt->tso_segsz;
+			tx_offload.outer_l2_len = tx_pkt->outer_l2_len;
+			tx_offload.outer_l3_len = tx_pkt->outer_l3_len;
 
 			/* If new context need be built or reuse the exist ctx. */
 			ctx = what_advctx_update(txq, tx_ol_req,
@@ -683,7 +717,7 @@ ixgbe_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 			if (ixgbe_xmit_cleanup(txq) != 0) {
 				/* Could not clean any descriptors */
 				if (nb_tx == 0)
-					return (0);
+					return 0;
 				goto end_of_tx;
 			}
 
@@ -712,7 +746,7 @@ ixgbe_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 						 * descriptors
 						 */
 						if (nb_tx == 0)
-							return (0);
+							return 0;
 						goto end_of_tx;
 					}
 				}
@@ -816,7 +850,7 @@ ixgbe_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 			 * Set up Transmit Data Descriptor.
 			 */
 			slen = m_seg->data_len;
-			buf_dma_addr = RTE_MBUF_DATA_DMA_ADDR(m_seg);
+			buf_dma_addr = rte_mbuf_data_dma_addr(m_seg);
 			txd->read.buffer_addr =
 				rte_cpu_to_le_64(buf_dma_addr);
 			txd->read.cmd_type_len =
@@ -870,7 +904,7 @@ end_of_tx:
 	IXGBE_PCI_REG_WRITE(txq->tdt_reg_addr, tx_id);
 	txq->tx_tail = tx_id;
 
-	return (nb_tx);
+	return nb_tx;
 }
 
 /*********************************************************************
@@ -1003,6 +1037,8 @@ rx_desc_status_to_pkt_flags(uint32_t rx_status)
 static inline uint64_t
 rx_desc_error_to_pkt_flags(uint32_t rx_status)
 {
+	uint64_t pkt_flags;
+
 	/*
 	 * Bit 31: IPE, IPv4 checksum error
 	 * Bit 30: L4I, L4I integrity error
@@ -1011,8 +1047,15 @@ rx_desc_error_to_pkt_flags(uint32_t rx_status)
 		0,  PKT_RX_L4_CKSUM_BAD, PKT_RX_IP_CKSUM_BAD,
 		PKT_RX_IP_CKSUM_BAD | PKT_RX_L4_CKSUM_BAD
 	};
-	return error_to_pkt_flags_map[(rx_status >>
+	pkt_flags = error_to_pkt_flags_map[(rx_status >>
 		IXGBE_RXDADV_ERR_CKSUM_BIT) & IXGBE_RXDADV_ERR_CKSUM_MSK];
+
+	if ((rx_status & IXGBE_RXD_STAT_OUTERIPCS) &&
+	    (rx_status & IXGBE_RXDADV_ERR_OUTERIPER)) {
+		pkt_flags |= PKT_RX_EIP_CKSUM_BAD;
+	}
+
+	return pkt_flags;
 }
 
 /*
@@ -1136,7 +1179,7 @@ ixgbe_rx_alloc_bufs(struct ixgbe_rx_queue *rxq, bool reset_mbuf)
 	diag = rte_mempool_get_bulk(rxq->mb_pool, (void *)rxep,
 				    rxq->rx_free_thresh);
 	if (unlikely(diag != 0))
-		return (-ENOMEM);
+		return -ENOMEM;
 
 	rxdp = &rxq->rx_ring[alloc_idx];
 	for (i = 0; i < rxq->rx_free_thresh; ++i) {
@@ -1152,7 +1195,7 @@ ixgbe_rx_alloc_bufs(struct ixgbe_rx_queue *rxq, bool reset_mbuf)
 		mb->data_off = RTE_PKTMBUF_HEADROOM;
 
 		/* populate the descriptors */
-		dma_addr = rte_cpu_to_le_64(RTE_MBUF_DATA_DMA_ADDR_DEFAULT(mb));
+		dma_addr = rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(mb));
 		rxdp[i].read.hdr_addr = 0;
 		rxdp[i].read.pkt_addr = dma_addr;
 	}
@@ -1379,7 +1422,7 @@ ixgbe_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		rxm = rxe->mbuf;
 		rxe->mbuf = nmb;
 		dma_addr =
-			rte_cpu_to_le_64(RTE_MBUF_DATA_DMA_ADDR_DEFAULT(nmb));
+			rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(nmb));
 		rxdp->read.hdr_addr = 0;
 		rxdp->read.pkt_addr = dma_addr;
 
@@ -1458,7 +1501,7 @@ ixgbe_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		nb_hold = 0;
 	}
 	rxq->nb_rx_hold = nb_hold;
-	return (nb_rx);
+	return nb_rx;
 }
 
 /**
@@ -1672,7 +1715,7 @@ next_desc:
 
 		if (!bulk_alloc) {
 			__le64 dma =
-			  rte_cpu_to_le_64(RTE_MBUF_DATA_DMA_ADDR_DEFAULT(nmb));
+			  rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(nmb));
 			/*
 			 * Update RX descriptor with the physical address of the
 			 * new data buffer of the new allocated mbuf.
@@ -2068,7 +2111,7 @@ ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	txq = rte_zmalloc_socket("ethdev TX queue", sizeof(struct ixgbe_tx_queue),
 				 RTE_CACHE_LINE_SIZE, socket_id);
 	if (txq == NULL)
-		return (-ENOMEM);
+		return -ENOMEM;
 
 	/*
 	 * Allocate TX ring hardware descriptors. A memzone large enough to
@@ -2080,7 +2123,7 @@ ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 			IXGBE_ALIGN, socket_id);
 	if (tz == NULL) {
 		ixgbe_tx_queue_release(txq);
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	txq->nb_tx_desc = nb_desc;
@@ -2117,7 +2160,7 @@ ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 				RTE_CACHE_LINE_SIZE, socket_id);
 	if (txq->sw_ring == NULL) {
 		ixgbe_tx_queue_release(txq);
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 	PMD_INIT_LOG(DEBUG, "sw_ring=%p hw_ring=%p dma_addr=0x%"PRIx64,
 		     txq->sw_ring, txq->tx_ring, txq->tx_ring_phys_addr);
@@ -2130,7 +2173,7 @@ ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	dev->data->tx_queues[queue_idx] = txq;
 
 
-	return (0);
+	return 0;
 }
 
 /**
@@ -2347,7 +2390,7 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	if (nb_desc % IXGBE_RXD_ALIGN != 0 ||
 			(nb_desc > IXGBE_MAX_RING_DESC) ||
 			(nb_desc < IXGBE_MIN_RING_DESC)) {
-		return (-EINVAL);
+		return -EINVAL;
 	}
 
 	/* Free memory prior to re-allocation if needed... */
@@ -2360,7 +2403,7 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq = rte_zmalloc_socket("ethdev RX queue", sizeof(struct ixgbe_rx_queue),
 				 RTE_CACHE_LINE_SIZE, socket_id);
 	if (rxq == NULL)
-		return (-ENOMEM);
+		return -ENOMEM;
 	rxq->mb_pool = mp;
 	rxq->nb_rx_desc = nb_desc;
 	rxq->rx_free_thresh = rx_conf->rx_free_thresh;
@@ -2382,7 +2425,7 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 				      RX_RING_SZ, IXGBE_ALIGN, socket_id);
 	if (rz == NULL) {
 		ixgbe_rx_queue_release(rxq);
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	/*
@@ -2439,7 +2482,7 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 					  RTE_CACHE_LINE_SIZE, socket_id);
 	if (!rxq->sw_ring) {
 		ixgbe_rx_queue_release(rxq);
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	/*
@@ -2456,7 +2499,7 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 				   RTE_CACHE_LINE_SIZE, socket_id);
 	if (!rxq->sw_sc_ring) {
 		ixgbe_rx_queue_release(rxq);
-		return (-ENOMEM);
+		return -ENOMEM;
 	}
 
 	PMD_INIT_LOG(DEBUG, "sw_ring=%p sw_sc_ring=%p hw_ring=%p "
@@ -3584,7 +3627,7 @@ ixgbe_alloc_rx_queue_mbufs(struct ixgbe_rx_queue *rxq)
 		if (mbuf == NULL) {
 			PMD_INIT_LOG(ERR, "RX mbuf alloc failed queue_id=%u",
 				     (unsigned) rxq->queue_id);
-			return (-ENOMEM);
+			return -ENOMEM;
 		}
 
 		rte_mbuf_refcnt_set(mbuf, 1);
@@ -3594,7 +3637,7 @@ ixgbe_alloc_rx_queue_mbufs(struct ixgbe_rx_queue *rxq)
 		mbuf->port = rxq->port_id;
 
 		dma_addr =
-			rte_cpu_to_le_64(RTE_MBUF_DATA_DMA_ADDR_DEFAULT(mbuf));
+			rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(mbuf));
 		rxd = &rxq->rx_ring[i];
 		rxd->read.hdr_addr = 0;
 		rxd->read.pkt_addr = dma_addr;

@@ -138,6 +138,19 @@
 
 #define IXGBE_CYCLECOUNTER_MASK   0xffffffffffffffffULL
 
+#define IXGBE_VT_CTL_POOLING_MODE_MASK         0x00030000
+#define IXGBE_VT_CTL_POOLING_MODE_ETAG         0x00010000
+#define DEFAULT_ETAG_ETYPE                     0x893f
+#define IXGBE_ETAG_ETYPE                       0x00005084
+#define IXGBE_ETAG_ETYPE_MASK                  0x0000ffff
+#define IXGBE_ETAG_ETYPE_VALID                 0x80000000
+#define IXGBE_RAH_ADTYPE                       0x40000000
+#define IXGBE_RAL_ETAG_FILTER_MASK             0x00003fff
+#define IXGBE_VMVIR_TAGA_MASK                  0x18000000
+#define IXGBE_VMVIR_TAGA_ETAG_INSERT           0x08000000
+#define IXGBE_VMTIR(_i) (0x00017000 + ((_i) * 4)) /* 64 of these (0-63) */
+#define IXGBE_QDE_STRIP_TAG                    0x00000004
+
 static int eth_ixgbe_dev_init(struct rte_eth_dev *eth_dev);
 static int eth_ixgbe_dev_uninit(struct rte_eth_dev *eth_dev);
 static int  ixgbe_dev_configure(struct rte_eth_dev *dev);
@@ -172,7 +185,9 @@ static int ixgbe_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu);
 
 static int ixgbe_vlan_filter_set(struct rte_eth_dev *dev,
 		uint16_t vlan_id, int on);
-static void ixgbe_vlan_tpid_set(struct rte_eth_dev *dev, uint16_t tpid_id);
+static int ixgbe_vlan_tpid_set(struct rte_eth_dev *dev,
+			       enum rte_vlan_type vlan_type,
+			       uint16_t tpid_id);
 static void ixgbe_vlan_hw_strip_bitmap_set(struct rte_eth_dev *dev,
 		uint16_t queue, bool on);
 static void ixgbe_vlan_strip_queue_set(struct rte_eth_dev *dev, uint16_t queue,
@@ -338,6 +353,22 @@ static int ixgbe_timesync_read_time(struct rte_eth_dev *dev,
 static int ixgbe_timesync_write_time(struct rte_eth_dev *dev,
 				   const struct timespec *timestamp);
 
+static int ixgbe_dev_l2_tunnel_eth_type_conf
+	(struct rte_eth_dev *dev, struct rte_eth_l2_tunnel_conf *l2_tunnel);
+static int ixgbe_dev_l2_tunnel_offload_set
+	(struct rte_eth_dev *dev,
+	 struct rte_eth_l2_tunnel_conf *l2_tunnel,
+	 uint32_t mask,
+	 uint8_t en);
+static int ixgbe_dev_l2_tunnel_filter_handle(struct rte_eth_dev *dev,
+					     enum rte_filter_op filter_op,
+					     void *arg);
+
+static int ixgbe_dev_udp_tunnel_port_add(struct rte_eth_dev *dev,
+					 struct rte_eth_udp_tunnel *udp_tunnel);
+static int ixgbe_dev_udp_tunnel_port_del(struct rte_eth_dev *dev,
+					 struct rte_eth_udp_tunnel *udp_tunnel);
+
 /*
  * Define VF Stats MACRO for Non "cleared on read" register
  */
@@ -495,6 +526,10 @@ static const struct eth_dev_ops ixgbe_eth_dev_ops = {
 	.timesync_adjust_time = ixgbe_timesync_adjust_time,
 	.timesync_read_time   = ixgbe_timesync_read_time,
 	.timesync_write_time  = ixgbe_timesync_write_time,
+	.l2_tunnel_eth_type_conf = ixgbe_dev_l2_tunnel_eth_type_conf,
+	.l2_tunnel_offload_set   = ixgbe_dev_l2_tunnel_offload_set,
+	.udp_tunnel_port_add  = ixgbe_dev_udp_tunnel_port_add,
+	.udp_tunnel_port_del  = ixgbe_dev_udp_tunnel_port_del,
 };
 
 /*
@@ -1323,7 +1358,7 @@ eth_ixgbevf_dev_init(struct rte_eth_dev *eth_dev)
 	 */
 	if ((diag != IXGBE_SUCCESS) && (diag != IXGBE_ERR_INVALID_MAC_ADDR)) {
 		PMD_INIT_LOG(ERR, "VF Initialization Failure: %d", diag);
-		return (diag);
+		return diag;
 	}
 
 	/* negotiate mailbox API version to use with the PF. */
@@ -1374,7 +1409,7 @@ eth_ixgbevf_dev_init(struct rte_eth_dev *eth_dev)
 
 		default:
 			PMD_INIT_LOG(ERR, "VF Initialization Failure: %d", diag);
-			return (-EIO);
+			return -EIO;
 	}
 
 	PMD_INIT_LOG(DEBUG, "port %d vendorID=0x%x deviceID=0x%x mac.type=%s",
@@ -1478,7 +1513,7 @@ rte_ixgbevf_pmd_init(const char *name __rte_unused, const char *param __rte_unus
 	PMD_INIT_FUNC_TRACE();
 
 	rte_eth_driver_register(&rte_ixgbevf_pmd);
-	return (0);
+	return 0;
 }
 
 static int
@@ -1516,14 +1551,27 @@ ixgbe_vlan_strip_queue_set(struct rte_eth_dev *dev, uint16_t queue, int on)
 		ixgbe_vlan_hw_strip_disable(dev, queue);
 }
 
-static void
-ixgbe_vlan_tpid_set(struct rte_eth_dev *dev, uint16_t tpid)
+static int
+ixgbe_vlan_tpid_set(struct rte_eth_dev *dev,
+		    enum rte_vlan_type vlan_type,
+		    uint16_t tpid)
 {
 	struct ixgbe_hw *hw =
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	int ret = 0;
 
-	/* Only the high 16-bits is valid */
-	IXGBE_WRITE_REG(hw, IXGBE_EXVET, tpid << 16);
+	switch (vlan_type) {
+	case ETH_VLAN_TYPE_INNER:
+		/* Only the high 16-bits is valid */
+		IXGBE_WRITE_REG(hw, IXGBE_EXVET, tpid << 16);
+		break;
+	default:
+		ret = -EINVAL;
+		PMD_DRV_LOG(ERR, "Unsupported vlan type %d\n", vlan_type);
+		break;
+	}
+
+	return ret;
 }
 
 void
@@ -1724,6 +1772,14 @@ ixgbe_vlan_hw_extend_enable(struct rte_eth_dev *dev)
 	ctrl  = IXGBE_READ_REG(hw, IXGBE_CTRL_EXT);
 	ctrl |= IXGBE_EXTENDED_VLAN;
 	IXGBE_WRITE_REG(hw, IXGBE_CTRL_EXT, ctrl);
+
+	/* Clear pooling mode of PFVTCTL. It's required by X550. */
+	if (hw->mac.type == ixgbe_mac_X550 ||
+	    hw->mac.type == ixgbe_mac_X550EM_x) {
+		ctrl = IXGBE_READ_REG(hw, IXGBE_VT_CTL);
+		ctrl &= ~IXGBE_VT_CTL_POOLING_MODE_MASK;
+		IXGBE_WRITE_REG(hw, IXGBE_VT_CTL, ctrl);
+	}
 
 	/*
 	 * VET EXT field in the EXVET register = 0x8100 by default
@@ -2162,7 +2218,7 @@ skip_link_setup:
 
 	ixgbe_restore_statistics_mapping(dev);
 
-	return (0);
+	return 0;
 
 error:
 	PMD_INIT_LOG(ERR, "failure in ixgbe_dev_start(): %d", err);
@@ -2791,6 +2847,10 @@ ixgbe_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	    !RTE_ETH_DEV_SRIOV(dev).active)
 		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_TCP_LRO;
 
+	if (hw->mac.type == ixgbe_mac_X550 ||
+	    hw->mac.type == ixgbe_mac_X550EM_x)
+		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM;
+
 	dev_info->tx_offload_capa =
 		DEV_TX_OFFLOAD_VLAN_INSERT |
 		DEV_TX_OFFLOAD_IPV4_CKSUM  |
@@ -2798,6 +2858,10 @@ ixgbe_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		DEV_TX_OFFLOAD_TCP_CKSUM   |
 		DEV_TX_OFFLOAD_SCTP_CKSUM  |
 		DEV_TX_OFFLOAD_TCP_TSO;
+
+	if (hw->mac.type == ixgbe_mac_X550 ||
+	    hw->mac.type == ixgbe_mac_X550EM_x)
+		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM;
 
 	dev_info->default_rxconf = (struct rte_eth_rxconf) {
 		.rx_thresh = {
@@ -3248,7 +3312,7 @@ ixgbe_dev_led_on(struct rte_eth_dev *dev)
 	struct ixgbe_hw *hw;
 
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	return (ixgbe_led_on(hw, 0) == IXGBE_SUCCESS ? 0 : -ENOTSUP);
+	return ixgbe_led_on(hw, 0) == IXGBE_SUCCESS ? 0 : -ENOTSUP;
 }
 
 static int
@@ -3257,7 +3321,7 @@ ixgbe_dev_led_off(struct rte_eth_dev *dev)
 	struct ixgbe_hw *hw;
 
 	hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
-	return (ixgbe_led_off(hw, 0) == IXGBE_SUCCESS ? 0 : -ENOTSUP);
+	return ixgbe_led_off(hw, 0) == IXGBE_SUCCESS ? 0 : -ENOTSUP;
 }
 
 static int
@@ -3339,7 +3403,7 @@ ixgbe_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 		(fc_conf->high_water < fc_conf->low_water)) {
 		PMD_INIT_LOG(ERR, "Invalid high/low water setup value in KB");
 		PMD_INIT_LOG(ERR, "High_water must <= 0x%x", max_high_water);
-		return (-EINVAL);
+		return -EINVAL;
 	}
 
 	hw->fc.requested_mode = rte_fcmode_2_ixgbe_fcmode[fc_conf->mode];
@@ -3561,7 +3625,7 @@ ixgbe_priority_flow_ctrl_set(struct rte_eth_dev *dev, struct rte_eth_pfc_conf *p
 	    (pfc_conf->fc.high_water <= pfc_conf->fc.low_water)) {
 		PMD_INIT_LOG(ERR, "Invalid high/low water setup value in KB");
 		PMD_INIT_LOG(ERR, "High_water must <= 0x%x", max_high_water);
-		return (-EINVAL);
+		return -EINVAL;
 	}
 
 	hw->fc.requested_mode = rte_fcmode_2_ixgbe_fcmode[pfc_conf->fc.mode];
@@ -4026,7 +4090,7 @@ ixgbe_vmdq_mode_check(struct ixgbe_hw *hw)
 	reg_val = IXGBE_READ_REG(hw, IXGBE_VT_CTL);
 	if (!(reg_val & IXGBE_VT_CTL_VT_ENABLE)) {
 		PMD_INIT_LOG(ERR, "VMDq must be enabled for this setting");
-		return (-1);
+		return -1;
 	}
 
 	return 0;
@@ -4083,7 +4147,7 @@ ixgbe_uc_hash_table_set(struct rte_eth_dev *dev,struct ether_addr* mac_addr,
 
 	/* The UTA table only exists on 82599 hardware and newer */
 	if (hw->mac.type < ixgbe_mac_82599EB)
-		return (-ENOTSUP);
+		return -ENOTSUP;
 
 	vector = ixgbe_uta_vector(hw,mac_addr);
 	uta_idx = (vector >> ixgbe_uta_bit_shift) & ixgbe_uta_idx_mask;
@@ -4126,7 +4190,7 @@ ixgbe_uc_all_hash_table_set(struct rte_eth_dev *dev, uint8_t on)
 
 	/* The UTA table only exists on 82599 hardware and newer */
 	if (hw->mac.type < ixgbe_mac_82599EB)
-		return (-ENOTSUP);
+		return -ENOTSUP;
 
 	if(on) {
 		for (i = 0; i < ETH_VMDQ_NUM_UC_HASH_ARRAY; i++) {
@@ -4175,10 +4239,10 @@ ixgbe_set_pool_rx_mode(struct rte_eth_dev *dev, uint16_t pool,
 	if (hw->mac.type == ixgbe_mac_82598EB) {
 		PMD_INIT_LOG(ERR, "setting VF receive mode set should be done"
 			     " on 82599 hardware and newer");
-		return (-ENOTSUP);
+		return -ENOTSUP;
 	}
 	if (ixgbe_vmdq_mode_check(hw) < 0)
-		return (-ENOTSUP);
+		return -ENOTSUP;
 
 	val = ixgbe_convert_vm_rx_mask_to_val(rx_mask, val);
 
@@ -4203,7 +4267,7 @@ ixgbe_set_pool_rx(struct rte_eth_dev *dev, uint16_t pool, uint8_t on)
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	if (ixgbe_vmdq_mode_check(hw) < 0)
-		return (-ENOTSUP);
+		return -ENOTSUP;
 
 	addr = IXGBE_VFRE(pool >= ETH_64_POOLS/2);
 	reg = IXGBE_READ_REG(hw, addr);
@@ -4230,7 +4294,7 @@ ixgbe_set_pool_tx(struct rte_eth_dev *dev, uint16_t pool, uint8_t on)
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	if (ixgbe_vmdq_mode_check(hw) < 0)
-		return (-ENOTSUP);
+		return -ENOTSUP;
 
 	addr = IXGBE_VFTE(pool >= ETH_64_POOLS/2);
 	reg = IXGBE_READ_REG(hw, addr);
@@ -4256,7 +4320,7 @@ ixgbe_set_pool_vlan_filter(struct rte_eth_dev *dev, uint16_t vlan,
 		IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 
 	if (ixgbe_vmdq_mode_check(hw) < 0)
-		return (-ENOTSUP);
+		return -ENOTSUP;
 	for (pool_idx = 0; pool_idx < ETH_64_POOLS; pool_idx++) {
 		if (pool_mask & ((uint64_t)(1ULL << pool_idx)))
 			ret = hw->mac.ops.set_vfta(hw,vlan,pool_idx,vlan_on);
@@ -4422,7 +4486,7 @@ ixgbe_mirror_rule_reset(struct rte_eth_dev *dev, uint8_t rule_id)
 		(IXGBE_DEV_PRIVATE_TO_PFDATA(dev->data->dev_private));
 
 	if (ixgbe_vmdq_mode_check(hw) < 0)
-		return (-ENOTSUP);
+		return -ENOTSUP;
 
 	memset(&mr_info->mr_conf[rule_id], 0,
 		sizeof(struct rte_eth_mirror_conf));
@@ -5596,6 +5660,9 @@ ixgbe_dev_filter_ctrl(struct rte_eth_dev *dev,
 	case RTE_ETH_FILTER_FDIR:
 		ret = ixgbe_fdir_ctrl_func(dev, filter_op, arg);
 		break;
+	case RTE_ETH_FILTER_L2_TUNNEL:
+		ret = ixgbe_dev_l2_tunnel_filter_handle(dev, filter_op, arg);
+		break;
 	default:
 		PMD_DRV_LOG(WARNING, "Filter type (%d) not supported",
 							filter_type);
@@ -6189,6 +6256,672 @@ ixgbe_dev_get_dcb_info(struct rte_eth_dev *dev,
 		dcb_info->tc_bws[i] = tc->path[IXGBE_DCB_TX_CONFIG].bwg_percent;
 	}
 	return 0;
+}
+
+/* Update e-tag ether type */
+static int
+ixgbe_update_e_tag_eth_type(struct ixgbe_hw *hw,
+			    uint16_t ether_type)
+{
+	uint32_t etag_etype;
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	etag_etype = IXGBE_READ_REG(hw, IXGBE_ETAG_ETYPE);
+	etag_etype &= ~IXGBE_ETAG_ETYPE_MASK;
+	etag_etype |= ether_type;
+	IXGBE_WRITE_REG(hw, IXGBE_ETAG_ETYPE, etag_etype);
+	IXGBE_WRITE_FLUSH(hw);
+
+	return 0;
+}
+
+/* Config l2 tunnel ether type */
+static int
+ixgbe_dev_l2_tunnel_eth_type_conf(struct rte_eth_dev *dev,
+				  struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	int ret = 0;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (l2_tunnel == NULL)
+		return -EINVAL;
+
+	switch (l2_tunnel->l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_update_e_tag_eth_type(hw, l2_tunnel->ether_type);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Enable e-tag tunnel */
+static int
+ixgbe_e_tag_enable(struct ixgbe_hw *hw)
+{
+	uint32_t etag_etype;
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	etag_etype = IXGBE_READ_REG(hw, IXGBE_ETAG_ETYPE);
+	etag_etype |= IXGBE_ETAG_ETYPE_VALID;
+	IXGBE_WRITE_REG(hw, IXGBE_ETAG_ETYPE, etag_etype);
+	IXGBE_WRITE_FLUSH(hw);
+
+	return 0;
+}
+
+/* Enable l2 tunnel */
+static int
+ixgbe_dev_l2_tunnel_enable(struct rte_eth_dev *dev,
+			   enum rte_eth_tunnel_type l2_tunnel_type)
+{
+	int ret = 0;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	switch (l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_enable(hw);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Disable e-tag tunnel */
+static int
+ixgbe_e_tag_disable(struct ixgbe_hw *hw)
+{
+	uint32_t etag_etype;
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	etag_etype = IXGBE_READ_REG(hw, IXGBE_ETAG_ETYPE);
+	etag_etype &= ~IXGBE_ETAG_ETYPE_VALID;
+	IXGBE_WRITE_REG(hw, IXGBE_ETAG_ETYPE, etag_etype);
+	IXGBE_WRITE_FLUSH(hw);
+
+	return 0;
+}
+
+/* Disable l2 tunnel */
+static int
+ixgbe_dev_l2_tunnel_disable(struct rte_eth_dev *dev,
+			    enum rte_eth_tunnel_type l2_tunnel_type)
+{
+	int ret = 0;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	switch (l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_disable(hw);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+static int
+ixgbe_e_tag_filter_del(struct rte_eth_dev *dev,
+		       struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	int ret = 0;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	uint32_t i, rar_entries;
+	uint32_t rar_low, rar_high;
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	rar_entries = ixgbe_get_num_rx_addrs(hw);
+
+	for (i = 1; i < rar_entries; i++) {
+		rar_high = IXGBE_READ_REG(hw, IXGBE_RAH(i));
+		rar_low  = IXGBE_READ_REG(hw, IXGBE_RAL(i));
+		if ((rar_high & IXGBE_RAH_AV) &&
+		    (rar_high & IXGBE_RAH_ADTYPE) &&
+		    ((rar_low & IXGBE_RAL_ETAG_FILTER_MASK) ==
+		     l2_tunnel->tunnel_id)) {
+			IXGBE_WRITE_REG(hw, IXGBE_RAL(i), 0);
+			IXGBE_WRITE_REG(hw, IXGBE_RAH(i), 0);
+
+			ixgbe_clear_vmdq(hw, i, IXGBE_CLEAR_VMDQ_ALL);
+
+			return ret;
+		}
+	}
+
+	return ret;
+}
+
+static int
+ixgbe_e_tag_filter_add(struct rte_eth_dev *dev,
+		       struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	int ret = 0;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	uint32_t i, rar_entries;
+	uint32_t rar_low, rar_high;
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	/* One entry for one tunnel. Try to remove potential existing entry. */
+	ixgbe_e_tag_filter_del(dev, l2_tunnel);
+
+	rar_entries = ixgbe_get_num_rx_addrs(hw);
+
+	for (i = 1; i < rar_entries; i++) {
+		rar_high = IXGBE_READ_REG(hw, IXGBE_RAH(i));
+		if (rar_high & IXGBE_RAH_AV) {
+			continue;
+		} else {
+			ixgbe_set_vmdq(hw, i, l2_tunnel->pool);
+			rar_high = IXGBE_RAH_AV | IXGBE_RAH_ADTYPE;
+			rar_low = l2_tunnel->tunnel_id;
+
+			IXGBE_WRITE_REG(hw, IXGBE_RAL(i), rar_low);
+			IXGBE_WRITE_REG(hw, IXGBE_RAH(i), rar_high);
+
+			return ret;
+		}
+	}
+
+	PMD_INIT_LOG(NOTICE, "The table of E-tag forwarding rule is full."
+		     " Please remove a rule before adding a new one.");
+	return -EINVAL;
+}
+
+/* Add l2 tunnel filter */
+static int
+ixgbe_dev_l2_tunnel_filter_add(struct rte_eth_dev *dev,
+			       struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	int ret = 0;
+
+	switch (l2_tunnel->l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_filter_add(dev, l2_tunnel);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Delete l2 tunnel filter */
+static int
+ixgbe_dev_l2_tunnel_filter_del(struct rte_eth_dev *dev,
+			       struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	int ret = 0;
+
+	switch (l2_tunnel->l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_filter_del(dev, l2_tunnel);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/**
+ * ixgbe_dev_l2_tunnel_filter_handle - Handle operations for l2 tunnel filter.
+ * @dev: pointer to rte_eth_dev structure
+ * @filter_op:operation will be taken.
+ * @arg: a pointer to specific structure corresponding to the filter_op
+ */
+static int
+ixgbe_dev_l2_tunnel_filter_handle(struct rte_eth_dev *dev,
+				  enum rte_filter_op filter_op,
+				  void *arg)
+{
+	int ret = 0;
+
+	if (filter_op == RTE_ETH_FILTER_NOP)
+		return 0;
+
+	if (arg == NULL) {
+		PMD_DRV_LOG(ERR, "arg shouldn't be NULL for operation %u.",
+			    filter_op);
+		return -EINVAL;
+	}
+
+	switch (filter_op) {
+	case RTE_ETH_FILTER_ADD:
+		ret = ixgbe_dev_l2_tunnel_filter_add
+			(dev,
+			 (struct rte_eth_l2_tunnel_conf *)arg);
+		break;
+	case RTE_ETH_FILTER_DELETE:
+		ret = ixgbe_dev_l2_tunnel_filter_del
+			(dev,
+			 (struct rte_eth_l2_tunnel_conf *)arg);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "unsupported operation %u.", filter_op);
+		ret = -EINVAL;
+		break;
+	}
+	return ret;
+}
+
+static int
+ixgbe_e_tag_forwarding_en_dis(struct rte_eth_dev *dev, bool en)
+{
+	int ret = 0;
+	uint32_t ctrl;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	ctrl = IXGBE_READ_REG(hw, IXGBE_VT_CTL);
+	ctrl &= ~IXGBE_VT_CTL_POOLING_MODE_MASK;
+	if (en)
+		ctrl |= IXGBE_VT_CTL_POOLING_MODE_ETAG;
+	IXGBE_WRITE_REG(hw, IXGBE_VT_CTL, ctrl);
+
+	return ret;
+}
+
+/* Enable l2 tunnel forwarding */
+static int
+ixgbe_dev_l2_tunnel_forwarding_enable
+	(struct rte_eth_dev *dev,
+	 enum rte_eth_tunnel_type l2_tunnel_type)
+{
+	int ret = 0;
+
+	switch (l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_forwarding_en_dis(dev, 1);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Disable l2 tunnel forwarding */
+static int
+ixgbe_dev_l2_tunnel_forwarding_disable
+	(struct rte_eth_dev *dev,
+	 enum rte_eth_tunnel_type l2_tunnel_type)
+{
+	int ret = 0;
+
+	switch (l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_forwarding_en_dis(dev, 0);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+static int
+ixgbe_e_tag_insertion_en_dis(struct rte_eth_dev *dev,
+			     struct rte_eth_l2_tunnel_conf *l2_tunnel,
+			     bool en)
+{
+	int ret = 0;
+	uint32_t vmtir, vmvir;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (l2_tunnel->vf_id >= dev->pci_dev->max_vfs) {
+		PMD_DRV_LOG(ERR,
+			    "VF id %u should be less than %u",
+			    l2_tunnel->vf_id,
+			    dev->pci_dev->max_vfs);
+		return -EINVAL;
+	}
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	if (en)
+		vmtir = l2_tunnel->tunnel_id;
+	else
+		vmtir = 0;
+
+	IXGBE_WRITE_REG(hw, IXGBE_VMTIR(l2_tunnel->vf_id), vmtir);
+
+	vmvir = IXGBE_READ_REG(hw, IXGBE_VMVIR(l2_tunnel->vf_id));
+	vmvir &= ~IXGBE_VMVIR_TAGA_MASK;
+	if (en)
+		vmvir |= IXGBE_VMVIR_TAGA_ETAG_INSERT;
+	IXGBE_WRITE_REG(hw, IXGBE_VMVIR(l2_tunnel->vf_id), vmvir);
+
+	return ret;
+}
+
+/* Enable l2 tunnel tag insertion */
+static int
+ixgbe_dev_l2_tunnel_insertion_enable(struct rte_eth_dev *dev,
+				     struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	int ret = 0;
+
+	switch (l2_tunnel->l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_insertion_en_dis(dev, l2_tunnel, 1);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Disable l2 tunnel tag insertion */
+static int
+ixgbe_dev_l2_tunnel_insertion_disable
+	(struct rte_eth_dev *dev,
+	 struct rte_eth_l2_tunnel_conf *l2_tunnel)
+{
+	int ret = 0;
+
+	switch (l2_tunnel->l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_insertion_en_dis(dev, l2_tunnel, 0);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+static int
+ixgbe_e_tag_stripping_en_dis(struct rte_eth_dev *dev,
+			     bool en)
+{
+	int ret = 0;
+	uint32_t qde;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	qde = IXGBE_READ_REG(hw, IXGBE_QDE);
+	if (en)
+		qde |= IXGBE_QDE_STRIP_TAG;
+	else
+		qde &= ~IXGBE_QDE_STRIP_TAG;
+	qde &= ~IXGBE_QDE_READ;
+	qde |= IXGBE_QDE_WRITE;
+	IXGBE_WRITE_REG(hw, IXGBE_QDE, qde);
+
+	return ret;
+}
+
+/* Enable l2 tunnel tag stripping */
+static int
+ixgbe_dev_l2_tunnel_stripping_enable
+	(struct rte_eth_dev *dev,
+	 enum rte_eth_tunnel_type l2_tunnel_type)
+{
+	int ret = 0;
+
+	switch (l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_stripping_en_dis(dev, 1);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Disable l2 tunnel tag stripping */
+static int
+ixgbe_dev_l2_tunnel_stripping_disable
+	(struct rte_eth_dev *dev,
+	 enum rte_eth_tunnel_type l2_tunnel_type)
+{
+	int ret = 0;
+
+	switch (l2_tunnel_type) {
+	case RTE_L2_TUNNEL_TYPE_E_TAG:
+		ret = ixgbe_e_tag_stripping_en_dis(dev, 0);
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Enable/disable l2 tunnel offload functions */
+static int
+ixgbe_dev_l2_tunnel_offload_set
+	(struct rte_eth_dev *dev,
+	 struct rte_eth_l2_tunnel_conf *l2_tunnel,
+	 uint32_t mask,
+	 uint8_t en)
+{
+	int ret = 0;
+
+	if (l2_tunnel == NULL)
+		return -EINVAL;
+
+	ret = -EINVAL;
+	if (mask & ETH_L2_TUNNEL_ENABLE_MASK) {
+		if (en)
+			ret = ixgbe_dev_l2_tunnel_enable(
+				dev,
+				l2_tunnel->l2_tunnel_type);
+		else
+			ret = ixgbe_dev_l2_tunnel_disable(
+				dev,
+				l2_tunnel->l2_tunnel_type);
+	}
+
+	if (mask & ETH_L2_TUNNEL_INSERTION_MASK) {
+		if (en)
+			ret = ixgbe_dev_l2_tunnel_insertion_enable(
+				dev,
+				l2_tunnel);
+		else
+			ret = ixgbe_dev_l2_tunnel_insertion_disable(
+				dev,
+				l2_tunnel);
+	}
+
+	if (mask & ETH_L2_TUNNEL_STRIPPING_MASK) {
+		if (en)
+			ret = ixgbe_dev_l2_tunnel_stripping_enable(
+				dev,
+				l2_tunnel->l2_tunnel_type);
+		else
+			ret = ixgbe_dev_l2_tunnel_stripping_disable(
+				dev,
+				l2_tunnel->l2_tunnel_type);
+	}
+
+	if (mask & ETH_L2_TUNNEL_FORWARDING_MASK) {
+		if (en)
+			ret = ixgbe_dev_l2_tunnel_forwarding_enable(
+				dev,
+				l2_tunnel->l2_tunnel_type);
+		else
+			ret = ixgbe_dev_l2_tunnel_forwarding_disable(
+				dev,
+				l2_tunnel->l2_tunnel_type);
+	}
+
+	return ret;
+}
+
+static int
+ixgbe_update_vxlan_port(struct ixgbe_hw *hw,
+			uint16_t port)
+{
+	IXGBE_WRITE_REG(hw, IXGBE_VXLANCTRL, port);
+	IXGBE_WRITE_FLUSH(hw);
+
+	return 0;
+}
+
+/* There's only one register for VxLAN UDP port.
+ * So, we cannot add several ports. Will update it.
+ */
+static int
+ixgbe_add_vxlan_port(struct ixgbe_hw *hw,
+		     uint16_t port)
+{
+	if (port == 0) {
+		PMD_DRV_LOG(ERR, "Add VxLAN port 0 is not allowed.");
+		return -EINVAL;
+	}
+
+	return ixgbe_update_vxlan_port(hw, port);
+}
+
+/* We cannot delete the VxLAN port. For there's a register for VxLAN
+ * UDP port, it must have a value.
+ * So, will reset it to the original value 0.
+ */
+static int
+ixgbe_del_vxlan_port(struct ixgbe_hw *hw,
+		     uint16_t port)
+{
+	uint16_t cur_port;
+
+	cur_port = (uint16_t)IXGBE_READ_REG(hw, IXGBE_VXLANCTRL);
+
+	if (cur_port != port) {
+		PMD_DRV_LOG(ERR, "Port %u does not exist.", port);
+		return -EINVAL;
+	}
+
+	return ixgbe_update_vxlan_port(hw, 0);
+}
+
+/* Add UDP tunneling port */
+static int
+ixgbe_dev_udp_tunnel_port_add(struct rte_eth_dev *dev,
+			      struct rte_eth_udp_tunnel *udp_tunnel)
+{
+	int ret = 0;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	if (udp_tunnel == NULL)
+		return -EINVAL;
+
+	switch (udp_tunnel->prot_type) {
+	case RTE_TUNNEL_TYPE_VXLAN:
+		ret = ixgbe_add_vxlan_port(hw, udp_tunnel->udp_port);
+		break;
+
+	case RTE_TUNNEL_TYPE_GENEVE:
+	case RTE_TUNNEL_TYPE_TEREDO:
+		PMD_DRV_LOG(ERR, "Tunnel type is not supported now.");
+		ret = -EINVAL;
+		break;
+
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/* Remove UDP tunneling port */
+static int
+ixgbe_dev_udp_tunnel_port_del(struct rte_eth_dev *dev,
+			      struct rte_eth_udp_tunnel *udp_tunnel)
+{
+	int ret = 0;
+	struct ixgbe_hw *hw = IXGBE_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (hw->mac.type != ixgbe_mac_X550 &&
+	    hw->mac.type != ixgbe_mac_X550EM_x) {
+		return -ENOTSUP;
+	}
+
+	if (udp_tunnel == NULL)
+		return -EINVAL;
+
+	switch (udp_tunnel->prot_type) {
+	case RTE_TUNNEL_TYPE_VXLAN:
+		ret = ixgbe_del_vxlan_port(hw, udp_tunnel->udp_port);
+		break;
+	case RTE_TUNNEL_TYPE_GENEVE:
+	case RTE_TUNNEL_TYPE_TEREDO:
+		PMD_DRV_LOG(ERR, "Tunnel type is not supported now.");
+		ret = -EINVAL;
+		break;
+	default:
+		PMD_DRV_LOG(ERR, "Invalid tunnel type");
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
 }
 
 static struct rte_driver rte_ixgbe_driver = {

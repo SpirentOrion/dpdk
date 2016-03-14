@@ -273,6 +273,22 @@
 #define I40E_INSET_IPV6_TC_MASK       0x0009F00FUL
 #define I40E_INSET_IPV6_NEXT_HDR_MASK 0x000C00FFUL
 
+#define I40E_GL_SWT_L2TAGCTRL(_i)             (0x001C0A70 + ((_i) * 4))
+#define I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_SHIFT 16
+#define I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_MASK  \
+	I40E_MASK(0xFFFF, I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_SHIFT)
+
+/* PCI offset for querying capability */
+#define PCI_DEV_CAP_REG            0xA4
+/* PCI offset for enabling/disabling Extended Tag */
+#define PCI_DEV_CTRL_REG           0xA8
+/* Bit mask of Extended Tag capability */
+#define PCI_DEV_CAP_EXT_TAG_MASK   0x20
+/* Bit shift of Extended Tag enable/disable */
+#define PCI_DEV_CTRL_EXT_TAG_SHIFT 8
+/* Bit mask of Extended Tag enable/disable */
+#define PCI_DEV_CTRL_EXT_TAG_MASK  (1 << PCI_DEV_CTRL_EXT_TAG_SHIFT)
+
 static int eth_i40e_dev_init(struct rte_eth_dev *eth_dev);
 static int eth_i40e_dev_uninit(struct rte_eth_dev *eth_dev);
 static int i40e_dev_configure(struct rte_eth_dev *dev);
@@ -299,7 +315,9 @@ static void i40e_dev_info_get(struct rte_eth_dev *dev,
 static int i40e_vlan_filter_set(struct rte_eth_dev *dev,
 				uint16_t vlan_id,
 				int on);
-static void i40e_vlan_tpid_set(struct rte_eth_dev *dev, uint16_t tpid);
+static int i40e_vlan_tpid_set(struct rte_eth_dev *dev,
+			      enum rte_vlan_type vlan_type,
+			      uint16_t tpid);
 static void i40e_vlan_offload_set(struct rte_eth_dev *dev, int mask);
 static void i40e_vlan_strip_queue_set(struct rte_eth_dev *dev,
 				      uint16_t queue,
@@ -369,10 +387,10 @@ static int i40e_dev_rss_hash_update(struct rte_eth_dev *dev,
 				    struct rte_eth_rss_conf *rss_conf);
 static int i40e_dev_rss_hash_conf_get(struct rte_eth_dev *dev,
 				      struct rte_eth_rss_conf *rss_conf);
-static int i40e_dev_udp_tunnel_add(struct rte_eth_dev *dev,
-				struct rte_eth_udp_tunnel *udp_tunnel);
-static int i40e_dev_udp_tunnel_del(struct rte_eth_dev *dev,
-				struct rte_eth_udp_tunnel *udp_tunnel);
+static int i40e_dev_udp_tunnel_port_add(struct rte_eth_dev *dev,
+					struct rte_eth_udp_tunnel *udp_tunnel);
+static int i40e_dev_udp_tunnel_port_del(struct rte_eth_dev *dev,
+					struct rte_eth_udp_tunnel *udp_tunnel);
 static int i40e_ethertype_filter_set(struct i40e_pf *pf,
 			struct rte_eth_ethertype_filter *filter,
 			bool add);
@@ -386,7 +404,7 @@ static int i40e_dev_filter_ctrl(struct rte_eth_dev *dev,
 static int i40e_dev_get_dcb_info(struct rte_eth_dev *dev,
 				  struct rte_eth_dcb_info *dcb_info);
 static void i40e_configure_registers(struct i40e_hw *hw);
-static void i40e_hw_init(struct i40e_hw *hw);
+static void i40e_hw_init(struct rte_eth_dev *dev);
 static int i40e_config_qinq(struct i40e_hw *hw, struct i40e_vsi *vsi);
 static int i40e_mirror_rule_set(struct rte_eth_dev *dev,
 			struct rte_eth_mirror_conf *mirror_conf,
@@ -467,8 +485,8 @@ static const struct eth_dev_ops i40e_eth_dev_ops = {
 	.reta_query                   = i40e_dev_rss_reta_query,
 	.rss_hash_update              = i40e_dev_rss_hash_update,
 	.rss_hash_conf_get            = i40e_dev_rss_hash_conf_get,
-	.udp_tunnel_add               = i40e_dev_udp_tunnel_add,
-	.udp_tunnel_del               = i40e_dev_udp_tunnel_del,
+	.udp_tunnel_port_add          = i40e_dev_udp_tunnel_port_add,
+	.udp_tunnel_port_del          = i40e_dev_udp_tunnel_port_del,
 	.filter_ctrl                  = i40e_dev_filter_ctrl,
 	.rxq_info_get                 = i40e_rxq_info_get,
 	.txq_info_get                 = i40e_txq_info_get,
@@ -765,7 +783,7 @@ eth_i40e_dev_init(struct rte_eth_dev *dev)
 	i40e_clear_hw(hw);
 
 	/* Initialize the hardware */
-	i40e_hw_init(hw);
+	i40e_hw_init(dev);
 
 	/* Reset here to make sure all is clean for each PF */
 	ret = i40e_pf_reset(hw);
@@ -871,6 +889,20 @@ eth_i40e_dev_init(struct rte_eth_dev *dev)
 	/* Disable flow control */
 	hw->fc.requested_mode = I40E_FC_NONE;
 	i40e_set_fc(hw, &aq_fail, TRUE);
+
+	/* Set the global registers with default ether type value */
+	ret = i40e_vlan_tpid_set(dev, ETH_VLAN_TYPE_OUTER, ETHER_TYPE_VLAN);
+	if (ret != I40E_SUCCESS) {
+		PMD_INIT_LOG(ERR, "Failed to set the default outer "
+			     "VLAN ether type");
+		goto err_setup_pf_switch;
+	}
+	ret = i40e_vlan_tpid_set(dev, ETH_VLAN_TYPE_INNER, ETHER_TYPE_VLAN);
+	if (ret != I40E_SUCCESS) {
+		PMD_INIT_LOG(ERR, "Failed to set the default outer "
+			     "VLAN ether type");
+		goto err_setup_pf_switch;
+	}
 
 	/* PF setup, which includes VSI setup */
 	ret = i40e_pf_setup(pf);
@@ -2319,11 +2351,59 @@ i40e_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vlan_id, int on)
 		return i40e_vsi_delete_vlan(vsi, vlan_id);
 }
 
-static void
-i40e_vlan_tpid_set(__rte_unused struct rte_eth_dev *dev,
-		   __rte_unused uint16_t tpid)
+static int
+i40e_vlan_tpid_set(struct rte_eth_dev *dev,
+		   enum rte_vlan_type vlan_type,
+		   uint16_t tpid)
 {
-	PMD_INIT_FUNC_TRACE();
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	uint64_t reg_r = 0, reg_w = 0;
+	uint16_t reg_id = 0;
+	int ret = 0;
+
+	switch (vlan_type) {
+	case ETH_VLAN_TYPE_OUTER:
+		reg_id = 2;
+		break;
+	case ETH_VLAN_TYPE_INNER:
+		reg_id = 3;
+		break;
+	default:
+		ret = -EINVAL;
+		PMD_DRV_LOG(ERR, "Unsupported vlan type %d", vlan_type);
+		return ret;
+	}
+	ret = i40e_aq_debug_read_register(hw, I40E_GL_SWT_L2TAGCTRL(reg_id),
+					  &reg_r, NULL);
+	if (ret != I40E_SUCCESS) {
+		PMD_DRV_LOG(ERR, "Fail to debug read from "
+			    "I40E_GL_SWT_L2TAGCTRL[%d]", reg_id);
+		ret = -EIO;
+		return ret;
+	}
+	PMD_DRV_LOG(DEBUG, "Debug read from I40E_GL_SWT_L2TAGCTRL[%d]: "
+		    "0x%08"PRIx64"", reg_id, reg_r);
+
+	reg_w = reg_r & (~(I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_MASK));
+	reg_w |= ((uint64_t)tpid << I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_SHIFT);
+	if (reg_r == reg_w) {
+		ret = 0;
+		PMD_DRV_LOG(DEBUG, "No need to write");
+		return ret;
+	}
+
+	ret = i40e_aq_debug_write_register(hw, I40E_GL_SWT_L2TAGCTRL(reg_id),
+					   reg_w, NULL);
+	if (ret != I40E_SUCCESS) {
+		ret = -EIO;
+		PMD_DRV_LOG(ERR, "Fail to debug write to "
+			    "I40E_GL_SWT_L2TAGCTRL[%d]", reg_id);
+		return ret;
+	}
+	PMD_DRV_LOG(DEBUG, "Debug write 0x%08"PRIx64" to "
+		    "I40E_GL_SWT_L2TAGCTRL[%d]", reg_w, reg_id);
+
+	return ret;
 }
 
 static void
@@ -3413,7 +3493,7 @@ i40e_res_pool_alloc(struct i40e_res_pool_info *pool,
 	pool->num_free -= valid_entry->len;
 	pool->num_alloc += valid_entry->len;
 
-	return (valid_entry->base + pool->base);
+	return valid_entry->base + pool->base;
 }
 
 /**
@@ -5797,6 +5877,12 @@ i40e_dev_get_filter_type(uint16_t filter_type, uint16_t *flag)
 	case ETH_TUNNEL_FILTER_IMAC:
 		*flag = I40E_AQC_ADD_CLOUD_FILTER_IMAC;
 		break;
+	case ETH_TUNNEL_FILTER_OIP:
+		*flag = I40E_AQC_ADD_CLOUD_FILTER_OIP;
+		break;
+	case ETH_TUNNEL_FILTER_IIP:
+		*flag = I40E_AQC_ADD_CLOUD_FILTER_IIP;
+		break;
 	default:
 		PMD_DRV_LOG(ERR, "invalid tunnel filter type");
 		return -EINVAL;
@@ -5811,7 +5897,9 @@ i40e_dev_tunnel_filter_set(struct i40e_pf *pf,
 			uint8_t add)
 {
 	uint16_t ip_type;
-	uint8_t tun_type = 0;
+	uint8_t i, tun_type = 0;
+	/* internal varialbe to convert ipv6 byte order */
+	uint32_t convert_ipv6[4];
 	int val, ret = 0;
 	struct i40e_hw *hw = I40E_PF_TO_HW(pf);
 	struct i40e_vsi *vsi = pf->main_vsi;
@@ -5828,21 +5916,22 @@ i40e_dev_tunnel_filter_set(struct i40e_pf *pf,
 	}
 	pfilter = cld_filter;
 
-	(void)rte_memcpy(&pfilter->outer_mac, tunnel_filter->outer_mac,
-			sizeof(struct ether_addr));
-	(void)rte_memcpy(&pfilter->inner_mac, tunnel_filter->inner_mac,
-			sizeof(struct ether_addr));
+	ether_addr_copy(&tunnel_filter->outer_mac, (struct ether_addr*)&pfilter->outer_mac);
+	ether_addr_copy(&tunnel_filter->inner_mac, (struct ether_addr*)&pfilter->inner_mac);
 
-	pfilter->inner_vlan = tunnel_filter->inner_vlan;
+	pfilter->inner_vlan = rte_cpu_to_le_16(tunnel_filter->inner_vlan);
 	if (tunnel_filter->ip_type == RTE_TUNNEL_IPTYPE_IPV4) {
 		ip_type = I40E_AQC_ADD_CLOUD_FLAGS_IPV4;
-		(void)rte_memcpy(&pfilter->ipaddr.v4.data,
-				&tunnel_filter->ip_addr,
+		rte_memcpy(&pfilter->ipaddr.v4.data,
+				&rte_cpu_to_le_32(tunnel_filter->ip_addr.ipv4_addr),
 				sizeof(pfilter->ipaddr.v4.data));
 	} else {
 		ip_type = I40E_AQC_ADD_CLOUD_FLAGS_IPV6;
-		(void)rte_memcpy(&pfilter->ipaddr.v6.data,
-				&tunnel_filter->ip_addr,
+		for (i = 0; i < 4; i++) {
+			convert_ipv6[i] =
+			rte_cpu_to_le_32(tunnel_filter->ip_addr.ipv6_addr[i]);
+		}
+		rte_memcpy(&pfilter->ipaddr.v6.data, &convert_ipv6,
 				sizeof(pfilter->ipaddr.v6.data));
 	}
 
@@ -5853,6 +5942,9 @@ i40e_dev_tunnel_filter_set(struct i40e_pf *pf,
 		break;
 	case RTE_TUNNEL_TYPE_NVGRE:
 		tun_type = I40E_AQC_ADD_CLOUD_TNL_TYPE_NVGRE_OMAC;
+		break;
+	case RTE_TUNNEL_TYPE_IP_IN_GRE:
+		tun_type = I40E_AQC_ADD_CLOUD_TNL_TYPE_IP;
 		break;
 	default:
 		/* Other tunnel types is not supported. */
@@ -5868,10 +5960,11 @@ i40e_dev_tunnel_filter_set(struct i40e_pf *pf,
 		return -EINVAL;
 	}
 
-	pfilter->flags |= I40E_AQC_ADD_CLOUD_FLAGS_TO_QUEUE | ip_type |
-		(tun_type << I40E_AQC_ADD_CLOUD_TNL_TYPE_SHIFT);
-	pfilter->tenant_id = tunnel_filter->tenant_id;
-	pfilter->queue_number = tunnel_filter->queue_id;
+	pfilter->flags |= rte_cpu_to_le_16(
+		I40E_AQC_ADD_CLOUD_FLAGS_TO_QUEUE |
+		ip_type | (tun_type << I40E_AQC_ADD_CLOUD_TNL_TYPE_SHIFT));
+	pfilter->tenant_id = rte_cpu_to_le_32(tunnel_filter->tenant_id);
+	pfilter->queue_number = rte_cpu_to_le_16(tunnel_filter->queue_id);
 
 	if (add)
 		ret = i40e_aq_add_cloud_filters(hw, vsi->seid, cld_filter, 1);
@@ -5976,8 +6069,8 @@ i40e_del_vxlan_port(struct i40e_pf *pf, uint16_t port)
 
 /* Add UDP tunneling port */
 static int
-i40e_dev_udp_tunnel_add(struct rte_eth_dev *dev,
-			struct rte_eth_udp_tunnel *udp_tunnel)
+i40e_dev_udp_tunnel_port_add(struct rte_eth_dev *dev,
+			     struct rte_eth_udp_tunnel *udp_tunnel)
 {
 	int ret = 0;
 	struct i40e_pf *pf = I40E_DEV_PRIVATE_TO_PF(dev->data->dev_private);
@@ -6007,8 +6100,8 @@ i40e_dev_udp_tunnel_add(struct rte_eth_dev *dev,
 
 /* Remove UDP tunneling port */
 static int
-i40e_dev_udp_tunnel_del(struct rte_eth_dev *dev,
-			struct rte_eth_udp_tunnel *udp_tunnel)
+i40e_dev_udp_tunnel_port_del(struct rte_eth_dev *dev,
+			     struct rte_eth_udp_tunnel *udp_tunnel)
 {
 	int ret = 0;
 	struct i40e_pf *pf = I40E_DEV_PRIVATE_TO_PF(dev->data->dev_private);
@@ -6131,13 +6224,13 @@ i40e_tunnel_filter_param_check(struct i40e_pf *pf,
 	}
 
 	if ((filter->filter_type & ETH_TUNNEL_FILTER_OMAC) &&
-		(is_zero_ether_addr(filter->outer_mac))) {
+		(is_zero_ether_addr(&filter->outer_mac))) {
 		PMD_DRV_LOG(ERR, "Cannot add NULL outer MAC address");
 		return -EINVAL;
 	}
 
 	if ((filter->filter_type & ETH_TUNNEL_FILTER_IMAC) &&
-		(is_zero_ether_addr(filter->inner_mac))) {
+		(is_zero_ether_addr(&filter->inner_mac))) {
 		PMD_DRV_LOG(ERR, "Cannot add NULL inner MAC address");
 		return -EINVAL;
 	}
@@ -7262,13 +7355,61 @@ i40e_dev_filter_ctrl(struct rte_eth_dev *dev,
 }
 
 /*
+ * Check and enable Extended Tag.
+ * Enabling Extended Tag is important for 40G performance.
+ */
+static void
+i40e_enable_extended_tag(struct rte_eth_dev *dev)
+{
+	uint32_t buf = 0;
+	int ret;
+
+	ret = rte_eal_pci_read_config(dev->pci_dev, &buf, sizeof(buf),
+				      PCI_DEV_CAP_REG);
+	if (ret < 0) {
+		PMD_DRV_LOG(ERR, "Failed to read PCI offset 0x%x",
+			    PCI_DEV_CAP_REG);
+		return;
+	}
+	if (!(buf & PCI_DEV_CAP_EXT_TAG_MASK)) {
+		PMD_DRV_LOG(ERR, "Does not support Extended Tag");
+		return;
+	}
+
+	buf = 0;
+	ret = rte_eal_pci_read_config(dev->pci_dev, &buf, sizeof(buf),
+				      PCI_DEV_CTRL_REG);
+	if (ret < 0) {
+		PMD_DRV_LOG(ERR, "Failed to read PCI offset 0x%x",
+			    PCI_DEV_CTRL_REG);
+		return;
+	}
+	if (buf & PCI_DEV_CTRL_EXT_TAG_MASK) {
+		PMD_DRV_LOG(DEBUG, "Extended Tag has already been enabled");
+		return;
+	}
+	buf |= PCI_DEV_CTRL_EXT_TAG_MASK;
+	ret = rte_eal_pci_write_config(dev->pci_dev, &buf, sizeof(buf),
+				       PCI_DEV_CTRL_REG);
+	if (ret < 0) {
+		PMD_DRV_LOG(ERR, "Failed to write PCI offset 0x%x",
+			    PCI_DEV_CTRL_REG);
+		return;
+	}
+}
+
+/*
  * As some registers wouldn't be reset unless a global hardware reset,
  * hardware initialization is needed to put those registers into an
  * expected initial state.
  */
 static void
-i40e_hw_init(struct i40e_hw *hw)
+i40e_hw_init(struct rte_eth_dev *dev)
 {
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	i40e_enable_extended_tag(dev);
+
 	/* clear the PF Queue Filter control register */
 	I40E_WRITE_REG(hw, I40E_PFQF_CTL_0, 0);
 
