@@ -4,3 +4,6 @@
 # build cruft
 x86_64-*-*-*/
 examples/*/build/
+
+# config cruft
+config/*
