@@ -78,6 +78,13 @@ struct mpipe_context {
 	struct mpipe_channel_config channels[MPIPE_MAX_CHANNELS];
 };
 
+/* Per-core local data. */
+struct mpipe_local {
+	int mbuf_push_debt[RTE_MAX_ETHPORTS];	/* Buffer push debt. */
+} __rte_cache_aligned;
+
+#define MPIPE_BUF_DEBT_THRESHOLD	32
+static __thread struct mpipe_local mpipe_local;
 static struct mpipe_context mpipe_contexts[GXIO_MPIPE_INSTANCE_MAX];
 static int mpipe_instances;
 static const char *drivername = "MPIPE PMD";
@@ -127,7 +134,6 @@ struct mpipe_dev_priv {
 	struct rte_mempool *rx_mpool;	/* mpool used by the rx queues. */
 	unsigned rx_offset;		/* Receive head room. */
 	unsigned rx_size_code;		/* mPIPE rx buffer size code. */
-	unsigned rx_buffers;		/* receive buffers on stack. */
 	int is_xaui:1,			/* Is this an xgbe or gbe? */
 	    initialized:1,		/* Initialized port? */
 	    running:1;			/* Running port? */
@@ -137,7 +143,7 @@ struct mpipe_dev_priv {
 	int first_bucket;		/* mPIPE bucket start index. */
 	int first_ring;			/* mPIPE notif ring start index. */
 	int notif_group;		/* mPIPE notif group. */
-	rte_atomic32_t dp_count;	/* Active datapath thread count. */
+	rte_atomic32_t dp_count __rte_cache_aligned;	/* DP Entry count. */
 	int tx_stat_mapping[RTE_ETHDEV_QUEUE_STAT_CNTRS];
 	int rx_stat_mapping[RTE_ETHDEV_QUEUE_STAT_CNTRS];
 };
@@ -461,6 +467,14 @@ mpipe_dp_wait(struct mpipe_dev_priv *priv)
 	}
 }
 
+static inline int
+mpipe_mbuf_stack_index(struct mpipe_dev_priv *priv, struct rte_mbuf *mbuf)
+{
+	return (mbuf->port < RTE_MAX_ETHPORTS) ?
+		mpipe_priv(&rte_eth_devices[mbuf->port])->stack :
+		priv->stack;
+}
+
 static inline struct rte_mbuf *
 mpipe_recv_mbuf(struct mpipe_dev_priv *priv, gxio_mpipe_idesc_t *idesc,
 		int in_port)
@@ -506,7 +520,6 @@ mpipe_recv_fill_stack(struct mpipe_dev_priv *priv, int count)
 		mpipe_recv_push(priv, mbuf);
 	}
 
-	priv->rx_buffers += count;
 	PMD_DEBUG_RX("%s: Filled %d/%d buffers\n", mpipe_name(priv), i, count);
 }
 
@@ -516,10 +529,9 @@ mpipe_recv_flush_stack(struct mpipe_dev_priv *priv)
 	const int offset = priv->rx_offset & ~RTE_MEMPOOL_ALIGN_MASK;
 	uint8_t in_port = priv->port_id;
 	struct rte_mbuf *mbuf;
-	unsigned count;
 	void *va;
 
-	for (count = 0; count < priv->rx_buffers; count++) {
+	while (1) {
 		va = gxio_mpipe_pop_buffer(priv->context, priv->stack);
 		if (!va)
 			break;
@@ -538,10 +550,6 @@ mpipe_recv_flush_stack(struct mpipe_dev_priv *priv)
 
 		__rte_mbuf_raw_free(mbuf);
 	}
-
-	PMD_DEBUG_RX("%s: Returned %d/%d buffers\n",
-		     mpipe_name(priv), count, priv->rx_buffers);
-	priv->rx_buffers -= count;
 }
 
 static void
@@ -736,13 +744,6 @@ mpipe_init(struct mpipe_dev_priv *priv)
 
 	if (priv->initialized)
 		return 0;
-
-	rc = mpipe_link_init(priv);
-	if (rc < 0) {
-		RTE_LOG(ERR, PMD, "%s: Failed to init link.\n",
-			mpipe_name(priv));
-		return rc;
-	}
 
 	rc = mpipe_recv_init(priv);
 	if (rc < 0) {
@@ -1230,31 +1231,23 @@ mpipe_recv_flush(struct mpipe_dev_priv *priv)
 	gxio_mpipe_iqueue_t *iqueue;
 	gxio_mpipe_idesc_t idesc;
 	struct rte_mbuf *mbuf;
-	int retries = 0;
 	unsigned queue;
 
-	do {
-		mpipe_recv_flush_stack(priv);
+	/* Release packets on the buffer stack. */
+	mpipe_recv_flush_stack(priv);
 
-		/* Flush packets sitting in recv queues. */
-		for (queue = 0; queue < priv->nb_rx_queues; queue++) {
-			rx_queue = mpipe_rx_queue(priv, queue);
-			iqueue = &rx_queue->iqueue;
-			while (gxio_mpipe_iqueue_try_get(iqueue, &idesc) >= 0) {
-				mbuf = mpipe_recv_mbuf(priv, &idesc, in_port);
-				rte_pktmbuf_free(mbuf);
-				priv->rx_buffers--;
-			}
-			rte_free(rx_queue->rx_ring_mem);
+	/* Flush packets sitting in recv queues. */
+	for (queue = 0; queue < priv->nb_rx_queues; queue++) {
+		rx_queue = mpipe_rx_queue(priv, queue);
+		iqueue = &rx_queue->iqueue;
+		while (gxio_mpipe_iqueue_try_get(iqueue, &idesc) >= 0) {
+			/* Skip idesc with the 'buffer error' bit set. */
+			if (idesc.be)
+				continue;
+			mbuf = mpipe_recv_mbuf(priv, &idesc, in_port);
+			rte_pktmbuf_free(mbuf);
 		}
-	} while (retries++ < 10 && priv->rx_buffers);
-
-	if (priv->rx_buffers) {
-		RTE_LOG(ERR, PMD, "%s: Leaked %d receive buffers.\n",
-			mpipe_name(priv), priv->rx_buffers);
-	} else {
-		PMD_DEBUG_RX("%s: Returned all receive buffers.\n",
-			     mpipe_name(priv));
+		rte_free(rx_queue->rx_ring_mem);
 	}
 }
 
@@ -1267,6 +1260,7 @@ mpipe_do_xmit(struct mpipe_tx_queue *tx_queue, struct rte_mbuf **tx_pkts,
 	unsigned nb_bytes = 0;
 	unsigned nb_sent = 0;
 	int nb_slots, i;
+	uint8_t port_id;
 
 	PMD_DEBUG_TX("Trying to transmit %d packets on %s:%d.\n",
 		     nb_pkts, mpipe_name(tx_queue->q.priv),
@@ -1315,14 +1309,23 @@ mpipe_do_xmit(struct mpipe_tx_queue *tx_queue, struct rte_mbuf **tx_pkts,
 			if (priv->tx_comps[idx])
 				rte_pktmbuf_free_seg(priv->tx_comps[idx]);
 
+			port_id = (mbuf->port < RTE_MAX_ETHPORTS) ?
+						mbuf->port : priv->port_id;
 			desc = (gxio_mpipe_edesc_t) { {
 				.va        = rte_pktmbuf_mtod(mbuf, uintptr_t),
 				.xfer_size = rte_pktmbuf_data_len(mbuf),
 				.bound     = next ? 0 : 1,
+				.stack_idx = mpipe_mbuf_stack_index(priv, mbuf),
+				.size      = priv->rx_size_code,
 			} };
+			if (mpipe_local.mbuf_push_debt[port_id] > 0) {
+				mpipe_local.mbuf_push_debt[port_id]--;
+				desc.hwb = 1;
+				priv->tx_comps[idx] = NULL;
+			} else
+				priv->tx_comps[idx] = mbuf;
 
 			nb_bytes += mbuf->data_len;
-			priv->tx_comps[idx] = mbuf;
 			gxio_mpipe_equeue_put_at(equeue, desc, slot + i);
 
 			PMD_DEBUG_TX("%s:%d: Sending packet %p, len %d\n",
@@ -1443,17 +1446,22 @@ mpipe_do_recv(struct mpipe_rx_queue *rx_queue, struct rte_mbuf **rx_pkts,
 				continue;
 			}
 
-			mbuf = __rte_mbuf_raw_alloc(priv->rx_mpool);
-			if (unlikely(!mbuf)) {
-				nb_nomem++;
-				gxio_mpipe_iqueue_drop(iqueue, idesc);
-				PMD_DEBUG_RX("%s:%d: RX alloc failure\n",
+			if (mpipe_local.mbuf_push_debt[in_port] <
+					MPIPE_BUF_DEBT_THRESHOLD)
+				mpipe_local.mbuf_push_debt[in_port]++;
+			else {
+				mbuf = __rte_mbuf_raw_alloc(priv->rx_mpool);
+				if (unlikely(!mbuf)) {
+					nb_nomem++;
+					gxio_mpipe_iqueue_drop(iqueue, idesc);
+					PMD_DEBUG_RX("%s:%d: alloc failure\n",
 					     mpipe_name(rx_queue->q.priv),
 					     rx_queue->q.queue_idx);
-				continue;
-			}
+					continue;
+				}
 
-			mpipe_recv_push(priv, mbuf);
+				mpipe_recv_push(priv, mbuf);
+			}
 
 			/* Get and setup the mbuf for the received packet. */
 			mbuf = mpipe_recv_mbuf(priv, idesc, in_port);
@@ -1602,6 +1610,13 @@ rte_pmd_mpipe_devinit(const char *ifname,
 	eth_dev->dev_ops      = &mpipe_dev_ops;
 	eth_dev->rx_pkt_burst = &mpipe_recv_pkts;
 	eth_dev->tx_pkt_burst = &mpipe_xmit_pkts;
+
+	rc = mpipe_link_init(priv);
+	if (rc < 0) {
+		RTE_LOG(ERR, PMD, "%s: Failed to init link.\n",
+			mpipe_name(priv));
+		return rc;
+	}
 
 	return 0;
 }

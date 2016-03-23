@@ -34,6 +34,8 @@
 #ifndef RTE_PMD_MLX5_DEFS_H_
 #define RTE_PMD_MLX5_DEFS_H_
 
+#include "mlx5_autoconf.h"
+
 /* Reported driver name. */
 #define MLX5_DRIVER_NAME "librte_pmd_mlx5"
 
@@ -42,6 +44,9 @@
 
 /* Maximum number of simultaneous VLAN filters. */
 #define MLX5_MAX_VLAN_IDS 128
+
+/* Maximum number of special flows. */
+#define MLX5_MAX_SPECIAL_FLOWS 4
 
 /* Request send completion once in every 64 sends, might be less. */
 #define MLX5_PMD_TX_PER_COMP_REQ 64
@@ -80,5 +85,14 @@
 
 /* Alarm timeout. */
 #define MLX5_ALARM_TIMEOUT_US 100000
+
+/*
+ * Extended flow priorities necessary to support flow director are available
+ * since MLNX_OFED 3.2. Considering this version adds support for VLAN
+ * offloads as well, their availability means flow director can be used.
+ */
+#ifdef HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS
+#define MLX5_FDIR_SUPPORT 1
+#endif
 
 #endif /* RTE_PMD_MLX5_DEFS_H_ */

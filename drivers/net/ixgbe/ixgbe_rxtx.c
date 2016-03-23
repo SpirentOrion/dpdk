@@ -109,7 +109,7 @@ rte_rxmbuf_alloc(struct rte_mempool *mp)
  */
 #define rte_ixgbe_prefetch(p)   rte_prefetch0(p)
 #else
-#define rte_ixgbe_prefetch(p)   do {} while(0)
+#define rte_ixgbe_prefetch(p)   do {} while (0)
 #endif
 
 /*********************************************************************
@@ -127,7 +127,8 @@ ixgbe_tx_free_bufs(struct ixgbe_tx_queue *txq)
 {
 	struct ixgbe_tx_entry *txep;
 	uint32_t status;
-	int i;
+	int i, nb_free = 0;
+	struct rte_mbuf *m, *free[RTE_IXGBE_TX_MAX_FREE_BUF_SZ];
 
 	/* check DD bit on threshold descriptor */
 	status = txq->tx_ring[txq->tx_next_dd].wb.status;
@@ -140,19 +141,26 @@ ixgbe_tx_free_bufs(struct ixgbe_tx_queue *txq)
 	 */
 	txep = &(txq->sw_ring[txq->tx_next_dd - (txq->tx_rs_thresh - 1)]);
 
-	/* free buffers one at a time */
-	if ((txq->txq_flags & (uint32_t)ETH_TXQ_FLAGS_NOREFCOUNT) != 0) {
-		for (i = 0; i < txq->tx_rs_thresh; ++i, ++txep) {
-			txep->mbuf->next = NULL;
-			rte_mempool_put(txep->mbuf->pool, txep->mbuf);
-			txep->mbuf = NULL;
+	for (i = 0; i < txq->tx_rs_thresh; ++i, ++txep) {
+		/* free buffers one at a time */
+		m = __rte_pktmbuf_prefree_seg(txep->mbuf);
+		txep->mbuf = NULL;
+
+		if (unlikely(m == NULL))
+			continue;
+
+		if (nb_free >= RTE_IXGBE_TX_MAX_FREE_BUF_SZ ||
+		    (nb_free > 0 && m->pool != free[0]->pool)) {
+			rte_mempool_put_bulk(free[0]->pool,
+					     (void **)free, nb_free);
+			nb_free = 0;
 		}
-	} else {
-		for (i = 0; i < txq->tx_rs_thresh; ++i, ++txep) {
-			rte_pktmbuf_free_seg(txep->mbuf);
-			txep->mbuf = NULL;
-		}
+
+		free[nb_free++] = m;
 	}
+
+	if (nb_free > 0)
+		rte_mempool_put_bulk(free[0]->pool, (void **)free, nb_free);
 
 	/* buffers were freed, update counters */
 	txq->nb_tx_free = (uint16_t)(txq->nb_tx_free + txq->tx_rs_thresh);
@@ -2146,7 +2154,8 @@ ixgbe_dev_tx_queue_setup(struct rte_eth_dev *dev,
 	if (hw->mac.type == ixgbe_mac_82599_vf ||
 	    hw->mac.type == ixgbe_mac_X540_vf ||
 	    hw->mac.type == ixgbe_mac_X550_vf ||
-	    hw->mac.type == ixgbe_mac_X550EM_x_vf)
+	    hw->mac.type == ixgbe_mac_X550EM_x_vf ||
+	    hw->mac.type == ixgbe_mac_X550EM_a_vf)
 		txq->tdt_reg_addr = IXGBE_PCI_REG_ADDR(hw, IXGBE_VFTDT(queue_idx));
 	else
 		txq->tdt_reg_addr = IXGBE_PCI_REG_ADDR(hw, IXGBE_TDT(txq->reg_idx));
@@ -2439,7 +2448,8 @@ ixgbe_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	if (hw->mac.type == ixgbe_mac_82599_vf ||
 	    hw->mac.type == ixgbe_mac_X540_vf ||
 	    hw->mac.type == ixgbe_mac_X550_vf ||
-	    hw->mac.type == ixgbe_mac_X550EM_x_vf) {
+	    hw->mac.type == ixgbe_mac_X550EM_x_vf ||
+	    hw->mac.type == ixgbe_mac_X550EM_a_vf) {
 		rxq->rdt_reg_addr =
 			IXGBE_PCI_REG_ADDR(hw, IXGBE_VFRDT(queue_idx));
 		rxq->rdh_reg_addr =
@@ -2895,13 +2905,14 @@ ixgbe_vmdq_dcb_configure(struct rte_eth_dev *dev)
 	switch (hw->mac.type) {
 	case ixgbe_mac_X550:
 	case ixgbe_mac_X550EM_x:
+	case ixgbe_mac_X550EM_a:
 		pbsize = (uint16_t)(X550_RX_BUFFER_SIZE / nb_tcs);
 		break;
 	default:
 		pbsize = (uint16_t)(NIC_RX_BUFFER_SIZE / nb_tcs);
 		break;
 	}
-	for (i = 0 ; i < nb_tcs; i++) {
+	for (i = 0; i < nb_tcs; i++) {
 		uint32_t rxpbsize = IXGBE_READ_REG(hw, IXGBE_RXPBSIZE(i));
 		rxpbsize &= (~(0x3FF << IXGBE_RXPBSIZE_SHIFT));
 		/* clear 10 bits. */
@@ -2947,7 +2958,7 @@ ixgbe_vmdq_dcb_configure(struct rte_eth_dev *dev)
 
 	/* VLNCTRL: enable vlan filtering and allow all vlan tags through */
 	vlanctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
-	vlanctrl |= IXGBE_VLNCTRL_VFE ; /* enable vlan filters */
+	vlanctrl |= IXGBE_VLNCTRL_VFE; /* enable vlan filters */
 	IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlanctrl);
 
 	/* VFTA - enable all vlan filters */
@@ -3204,7 +3215,7 @@ ixgbe_dcb_rx_hw_config(struct ixgbe_hw *hw,
 
 	/* VLNCTRL: enable vlan filtering and allow all vlan tags through */
 	vlanctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
-	vlanctrl |= IXGBE_VLNCTRL_VFE ; /* enable vlan filters */
+	vlanctrl |= IXGBE_VLNCTRL_VFE; /* enable vlan filters */
 	IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlanctrl);
 
 	/* VFTA - enable all vlan filters */
@@ -3234,6 +3245,7 @@ ixgbe_dcb_hw_arbite_rx_config(struct ixgbe_hw *hw, uint16_t *refill,
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
 	case ixgbe_mac_X550EM_x:
+	case ixgbe_mac_X550EM_a:
 		ixgbe_dcb_config_rx_arbiter_82599(hw, refill, max, bwg_id,
 						  tsa, map);
 		break;
@@ -3255,6 +3267,7 @@ ixgbe_dcb_hw_arbite_tx_config(struct ixgbe_hw *hw, uint16_t *refill, uint16_t *m
 	case ixgbe_mac_X540:
 	case ixgbe_mac_X550:
 	case ixgbe_mac_X550EM_x:
+	case ixgbe_mac_X550EM_a:
 		ixgbe_dcb_config_tx_desc_arbiter_82599(hw, refill, max, bwg_id,tsa);
 		ixgbe_dcb_config_tx_data_arbiter_82599(hw, refill, max, bwg_id,tsa, map);
 		break;
@@ -3344,7 +3357,7 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 	nb_tcs = dcb_config->num_tcs.pfc_tcs;
 	/* Unpack map */
 	ixgbe_dcb_unpack_map_cee(dcb_config, IXGBE_DCB_RX_CONFIG, map);
-	if(nb_tcs == ETH_4_TCS) {
+	if (nb_tcs == ETH_4_TCS) {
 		/* Avoid un-configured priority mapping to TC0 */
 		uint8_t j = 4;
 		uint8_t mask = 0xFF;
@@ -3373,6 +3386,7 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 	switch (hw->mac.type) {
 	case ixgbe_mac_X550:
 	case ixgbe_mac_X550EM_x:
+	case ixgbe_mac_X550EM_a:
 		rx_buffer_size = X550_RX_BUFFER_SIZE;
 		break;
 	default:
@@ -3380,11 +3394,11 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 		break;
 	}
 
-	if(config_dcb_rx) {
+	if (config_dcb_rx) {
 		/* Set RX buffer size */
 		pbsize = (uint16_t)(rx_buffer_size / nb_tcs);
 		uint32_t rxpbsize = pbsize << IXGBE_RXPBSIZE_SHIFT;
-		for (i = 0 ; i < nb_tcs; i++) {
+		for (i = 0; i < nb_tcs; i++) {
 			IXGBE_WRITE_REG(hw, IXGBE_RXPBSIZE(i), rxpbsize);
 		}
 		/* zero alloc all unused TCs */
@@ -3392,7 +3406,7 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 			IXGBE_WRITE_REG(hw, IXGBE_RXPBSIZE(i), 0);
 		}
 	}
-	if(config_dcb_tx) {
+	if (config_dcb_tx) {
 		/* Only support an equally distributed Tx packet buffer strategy. */
 		uint32_t txpktsize = IXGBE_TXPBSIZE_MAX / nb_tcs;
 		uint32_t txpbthresh = (txpktsize / DCB_TX_PB) - IXGBE_TXPKT_SIZE_MAX;
@@ -3413,7 +3427,7 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 	ixgbe_dcb_calculate_tc_credits_cee(hw, dcb_config,max_frame,
 				IXGBE_DCB_RX_CONFIG);
 
-	if(config_dcb_rx) {
+	if (config_dcb_rx) {
 		/* Unpack CEE standard containers */
 		ixgbe_dcb_unpack_refill_cee(dcb_config, IXGBE_DCB_RX_CONFIG, refill);
 		ixgbe_dcb_unpack_max_cee(dcb_config, max);
@@ -3423,7 +3437,7 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 		ixgbe_dcb_hw_arbite_rx_config(hw,refill,max,bwgid,tsa,map);
 	}
 
-	if(config_dcb_tx) {
+	if (config_dcb_tx) {
 		/* Unpack CEE standard containers */
 		ixgbe_dcb_unpack_refill_cee(dcb_config, IXGBE_DCB_TX_CONFIG, refill);
 		ixgbe_dcb_unpack_max_cee(dcb_config, max);
@@ -3437,7 +3451,7 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 	ixgbe_dcb_config_tc_stats_82599(hw, dcb_config);
 
 	/* Check if the PFC is supported */
-	if(dev->data->dev_conf.dcb_capability_en & ETH_DCB_PFC_SUPPORT) {
+	if (dev->data->dev_conf.dcb_capability_en & ETH_DCB_PFC_SUPPORT) {
 		pbsize = (uint16_t)(rx_buffer_size / nb_tcs);
 		for (i = 0; i < nb_tcs; i++) {
 			/*
@@ -3451,7 +3465,7 @@ ixgbe_dcb_hw_configure(struct rte_eth_dev *dev,
 			tc->pfc = ixgbe_dcb_pfc_enabled;
 		}
 		ixgbe_dcb_unpack_pfc_cee(dcb_config, map, &pfc_en);
-		if(dcb_config->num_tcs.pfc_tcs == ETH_4_TCS)
+		if (dcb_config->num_tcs.pfc_tcs == ETH_4_TCS)
 			pfc_en &= 0x0F;
 		ret = ixgbe_dcb_config_pfc(hw, pfc_en, map);
 	}
@@ -3526,7 +3540,7 @@ ixgbe_vmdq_rx_hw_configure(struct rte_eth_dev *dev)
 
 	/* VLNCTRL: enable vlan filtering and allow all vlan tags through */
 	vlanctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
-	vlanctrl |= IXGBE_VLNCTRL_VFE ; /* enable vlan filters */
+	vlanctrl |= IXGBE_VLNCTRL_VFE; /* enable vlan filters */
 	IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlanctrl);
 
 	/* VFTA - enable all vlan filters */
@@ -4395,6 +4409,7 @@ ixgbe_dev_tx_init(struct rte_eth_dev *dev)
 			case ixgbe_mac_X540:
 			case ixgbe_mac_X550:
 			case ixgbe_mac_X550EM_x:
+			case ixgbe_mac_X550EM_a:
 			default:
 				txctrl = IXGBE_READ_REG(hw,
 						IXGBE_DCA_TXCTRL_82599(txq->reg_idx));

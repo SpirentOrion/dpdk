@@ -89,8 +89,8 @@ static void vmxnet3_dev_info_get(struct rte_eth_dev *dev,
 static int vmxnet3_dev_vlan_filter_set(struct rte_eth_dev *dev,
 				       uint16_t vid, int on);
 static void vmxnet3_dev_vlan_offload_set(struct rte_eth_dev *dev, int mask);
-static void vmxnet3_dev_vlan_offload_set_clear(struct rte_eth_dev *dev,
-						int mask, int clear);
+static void vmxnet3_mac_addr_set(struct rte_eth_dev *dev,
+				 struct ether_addr *mac_addr);
 
 #if PROCESS_SYS_EVENTS == 1
 static void vmxnet3_process_events(struct vmxnet3_hw *);
@@ -117,6 +117,7 @@ static const struct eth_dev_ops vmxnet3_eth_dev_ops = {
 	.allmulticast_disable = vmxnet3_dev_allmulticast_disable,
 	.link_update          = vmxnet3_dev_link_update,
 	.stats_get            = vmxnet3_dev_stats_get,
+	.mac_addr_set	      = vmxnet3_mac_addr_set,
 	.dev_infos_get        = vmxnet3_dev_info_get,
 	.vlan_filter_set      = vmxnet3_dev_vlan_filter_set,
 	.vlan_offload_set     = vmxnet3_dev_vlan_offload_set,
@@ -294,6 +295,9 @@ eth_vmxnet3_dev_init(struct rte_eth_dev *eth_dev)
 	/* Put device in Quiesce Mode */
 	VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_CMD, VMXNET3_CMD_QUIESCE_DEV);
 
+	/* allow untagged pkts */
+	VMXNET3_SET_VFTABLE_ENTRY(hw->shadow_vfta, 0);
+
 	return 0;
 }
 
@@ -420,16 +424,33 @@ vmxnet3_dev_configure(struct rte_eth_dev *dev)
 	return 0;
 }
 
+static void
+vmxnet3_write_mac(struct vmxnet3_hw *hw, const uint8_t *addr)
+{
+	uint32_t val;
+
+	PMD_INIT_LOG(DEBUG,
+		     "Writing MAC Address : %02x:%02x:%02x:%02x:%02x:%02x",
+		     addr[0], addr[1], addr[2],
+		     addr[3], addr[4], addr[5]);
+
+	val = *(const uint32_t *)addr;
+	VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_MACL, val);
+
+	val = (addr[5] << 8) | addr[4];
+	VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_MACH, val);
+}
+
 static int
 vmxnet3_setup_driver_shared(struct rte_eth_dev *dev)
 {
 	struct rte_eth_conf port_conf = dev->data->dev_conf;
 	struct vmxnet3_hw *hw = dev->data->dev_private;
+	uint32_t mtu = dev->data->mtu;
 	Vmxnet3_DriverShared *shared = hw->shared;
 	Vmxnet3_DSDevRead *devRead = &shared->devRead;
-	uint32_t *mac_ptr;
-	uint32_t val, i;
-	int ret, mask;
+	uint32_t i;
+	int ret;
 
 	shared->magic = VMXNET3_REV1_MAGIC;
 	devRead->misc.driverInfo.version = VMXNET3_DRIVER_VERSION_NUM;
@@ -442,7 +463,7 @@ vmxnet3_setup_driver_shared(struct rte_eth_dev *dev)
 	devRead->misc.driverInfo.vmxnet3RevSpt = 1;
 	devRead->misc.driverInfo.uptVerSpt     = 1;
 
-	devRead->misc.mtu = rte_le_to_cpu_32(dev->data->mtu);
+	devRead->misc.mtu = rte_le_to_cpu_32(mtu);
 	devRead->misc.queueDescPA  = hw->queueDescPA;
 	devRead->misc.queueDescLen = hw->queue_desc_len;
 	devRead->misc.numTxQueues  = hw->num_tx_queues;
@@ -511,27 +532,10 @@ vmxnet3_setup_driver_shared(struct rte_eth_dev *dev)
 		devRead->rssConfDesc.confPA  = hw->rss_confPA;
 	}
 
-	mask = 0;
-	if (dev->data->dev_conf.rxmode.hw_vlan_strip)
-		mask |= ETH_VLAN_STRIP_MASK;
+	vmxnet3_dev_vlan_offload_set(dev,
+			     ETH_VLAN_STRIP_MASK | ETH_VLAN_FILTER_MASK);
 
-	if (dev->data->dev_conf.rxmode.hw_vlan_filter)
-		mask |= ETH_VLAN_FILTER_MASK;
-
-	vmxnet3_dev_vlan_offload_set_clear(dev, mask, 1);
-
-	PMD_INIT_LOG(DEBUG,
-		     "Writing MAC Address : %02x:%02x:%02x:%02x:%02x:%02x",
-		     hw->perm_addr[0], hw->perm_addr[1], hw->perm_addr[2],
-		     hw->perm_addr[3], hw->perm_addr[4], hw->perm_addr[5]);
-
-	/* Write MAC Address back to device */
-	mac_ptr = (uint32_t *)hw->perm_addr;
-	val = *mac_ptr;
-	VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_MACL, val);
-
-	val = (hw->perm_addr[5] << 8) | hw->perm_addr[4];
-	VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_MACH, val);
+	vmxnet3_write_mac(hw, hw->perm_addr);
 
 	return VMXNET3_SUCCESS;
 }
@@ -564,7 +568,7 @@ vmxnet3_dev_start(struct rte_eth_dev *dev)
 	status = VMXNET3_READ_BAR1_REG(hw, VMXNET3_REG_CMD);
 
 	if (status != 0) {
-		PMD_INIT_LOG(ERR, "Device activation in %s(): UNSUCCESSFUL", __func__);
+		PMD_INIT_LOG(ERR, "Device activation: UNSUCCESSFUL");
 		return -1;
 	}
 
@@ -577,7 +581,7 @@ vmxnet3_dev_start(struct rte_eth_dev *dev)
 	 */
 	ret = vmxnet3_dev_rxtx_init(dev);
 	if (ret != VMXNET3_SUCCESS) {
-		PMD_INIT_LOG(ERR, "Device receive init in %s: UNSUCCESSFUL", __func__);
+		PMD_INIT_LOG(ERR, "Device receive init: UNSUCCESSFUL");
 		return ret;
 	}
 
@@ -693,7 +697,8 @@ vmxnet3_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 }
 
 static void
-vmxnet3_dev_info_get(__attribute__((unused))struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
+vmxnet3_dev_info_get(__attribute__((unused))struct rte_eth_dev *dev,
+		     struct rte_eth_dev_info *dev_info)
 {
 	dev_info->max_rx_queues = VMXNET3_MAX_RX_QUEUES;
 	dev_info->max_tx_queues = VMXNET3_MAX_TX_QUEUES;
@@ -716,6 +721,25 @@ vmxnet3_dev_info_get(__attribute__((unused))struct rte_eth_dev *dev, struct rte_
 		.nb_min = VMXNET3_DEF_TX_RING_SIZE,
 		.nb_align = 1,
 	};
+
+	dev_info->rx_offload_capa =
+		DEV_RX_OFFLOAD_VLAN_STRIP |
+		DEV_RX_OFFLOAD_UDP_CKSUM |
+		DEV_RX_OFFLOAD_TCP_CKSUM;
+
+	dev_info->tx_offload_capa =
+		DEV_TX_OFFLOAD_VLAN_INSERT |
+		DEV_TX_OFFLOAD_TCP_CKSUM |
+		DEV_TX_OFFLOAD_UDP_CKSUM |
+		DEV_TX_OFFLOAD_TCP_TSO;
+}
+
+static void
+vmxnet3_mac_addr_set(struct rte_eth_dev *dev, struct ether_addr *mac_addr)
+{
+	struct vmxnet3_hw *hw = dev->data->dev_private;
+
+	vmxnet3_write_mac(hw, mac_addr->addr_bytes);
 }
 
 /* return 0 means link status changed, -1 means not changed */
@@ -819,7 +843,7 @@ vmxnet3_dev_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vid, int on)
 	else
 		VMXNET3_CLEAR_VFTABLE_ENTRY(hw->shadow_vfta, vid);
 
-	/* don't change active filter if in promiscious mode */
+	/* don't change active filter if in promiscuous mode */
 	if (rxConf->rxMode & VMXNET3_RXM_PROMISC)
 		return 0;
 
@@ -835,44 +859,31 @@ vmxnet3_dev_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vid, int on)
 }
 
 static void
-vmxnet3_dev_vlan_offload_set_clear(struct rte_eth_dev *dev,
-				   int mask, int clear)
+vmxnet3_dev_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 {
 	struct vmxnet3_hw *hw = dev->data->dev_private;
 	Vmxnet3_DSDevRead *devRead = &hw->shared->devRead;
 	uint32_t *vf_table = devRead->rxFilterConf.vfTable;
 
-	if (mask & ETH_VLAN_STRIP_MASK)
-		devRead->misc.uptFeatures |= UPT1_F_RXVLAN;
-	else
-		devRead->misc.uptFeatures &= ~UPT1_F_RXVLAN;
+	if (mask & ETH_VLAN_STRIP_MASK) {
+		if (dev->data->dev_conf.rxmode.hw_vlan_strip)
+			devRead->misc.uptFeatures |= UPT1_F_RXVLAN;
+		else
+			devRead->misc.uptFeatures &= ~UPT1_F_RXVLAN;
 
-	VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_CMD,
-			       VMXNET3_CMD_UPDATE_FEATURE);
-
-	if (mask & ETH_VLAN_FILTER_MASK) {
-		if (clear) {
-			memset(hw->shadow_vfta, 0,
-			       VMXNET3_VFT_TABLE_SIZE);
-			/* allow untagged pkts */
-			VMXNET3_SET_VFTABLE_ENTRY(hw->shadow_vfta, 0);
-		}
-		memcpy(vf_table, hw->shadow_vfta, VMXNET3_VFT_TABLE_SIZE);
-	} else {
-		/* allow any pkts -- no filtering */
-		if (clear)
-			memset(hw->shadow_vfta, 0xff, VMXNET3_VFT_TABLE_SIZE);
-		memset(vf_table, 0xff, VMXNET3_VFT_TABLE_SIZE);
+		VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_CMD,
+				       VMXNET3_CMD_UPDATE_FEATURE);
 	}
 
-	VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_CMD,
-			       VMXNET3_CMD_UPDATE_VLAN_FILTERS);
-}
+	if (mask & ETH_VLAN_FILTER_MASK) {
+		if (dev->data->dev_conf.rxmode.hw_vlan_filter)
+			memcpy(vf_table, hw->shadow_vfta, VMXNET3_VFT_TABLE_SIZE);
+		else
+			memset(vf_table, 0xff, VMXNET3_VFT_TABLE_SIZE);
 
-static void
-vmxnet3_dev_vlan_offload_set(struct rte_eth_dev *dev, int mask)
-{
-	vmxnet3_dev_vlan_offload_set_clear(dev, mask, 0);
+		VMXNET3_WRITE_BAR1_REG(hw, VMXNET3_REG_CMD,
+				       VMXNET3_CMD_UPDATE_VLAN_FILTERS);
+	}
 }
 
 #if PROCESS_SYS_EVENTS == 1
@@ -882,7 +893,7 @@ vmxnet3_process_events(struct vmxnet3_hw *hw)
 	uint32_t events = hw->shared->ecr;
 
 	if (!events) {
-		PMD_INIT_LOG(ERR, "No events to process in %s()", __func__);
+		PMD_INIT_LOG(ERR, "No events to process");
 		return;
 	}
 

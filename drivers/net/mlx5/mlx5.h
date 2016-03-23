@@ -101,6 +101,7 @@ struct priv {
 	unsigned int allmulti_req:1; /* All multicast mode requested. */
 	unsigned int hw_csum:1; /* Checksum offload is supported. */
 	unsigned int hw_csum_l2tun:1; /* Same for L2 tunnels. */
+	unsigned int hw_vlan_strip:1; /* VLAN stripping is supported. */
 	unsigned int vf:1; /* This is a VF device. */
 	unsigned int pending_alarm:1; /* An alarm is pending. */
 	/* RX/TX queues. */
@@ -120,6 +121,7 @@ struct priv {
 	struct rte_intr_handle intr_handle; /* Interrupt handler. */
 	unsigned int (*reta_idx)[]; /* RETA index table. */
 	unsigned int reta_idx_n; /* RETA index size. */
+	struct fdir_filter_list *fdir_filter_list; /* Flow director rules. */
 	rte_spinlock_t lock; /* Lock for control functions. */
 };
 
@@ -179,6 +181,7 @@ int priv_mac_addr_add(struct priv *, unsigned int,
 int priv_mac_addrs_enable(struct priv *);
 void mlx5_mac_addr_add(struct rte_eth_dev *, struct ether_addr *, uint32_t,
 		       uint32_t);
+void mlx5_mac_addr_set(struct rte_eth_dev *, struct ether_addr *);
 
 /* mlx5_rss.c */
 
@@ -194,13 +197,13 @@ int mlx5_dev_rss_reta_update(struct rte_eth_dev *,
 
 /* mlx5_rxmode.c */
 
-int priv_promiscuous_enable(struct priv *);
+int priv_special_flow_enable(struct priv *, enum hash_rxq_flow_type);
+void priv_special_flow_disable(struct priv *, enum hash_rxq_flow_type);
+int priv_special_flow_enable_all(struct priv *);
+void priv_special_flow_disable_all(struct priv *);
 void mlx5_promiscuous_enable(struct rte_eth_dev *);
-void priv_promiscuous_disable(struct priv *);
 void mlx5_promiscuous_disable(struct rte_eth_dev *);
-int priv_allmulticast_enable(struct priv *);
 void mlx5_allmulticast_enable(struct rte_eth_dev *);
-void priv_allmulticast_disable(struct priv *);
 void mlx5_allmulticast_disable(struct rte_eth_dev *);
 
 /* mlx5_stats.c */
@@ -211,10 +214,21 @@ void mlx5_stats_reset(struct rte_eth_dev *);
 /* mlx5_vlan.c */
 
 int mlx5_vlan_filter_set(struct rte_eth_dev *, uint16_t, int);
+void mlx5_vlan_offload_set(struct rte_eth_dev *, int);
+void mlx5_vlan_strip_queue_set(struct rte_eth_dev *, uint16_t, int);
 
 /* mlx5_trigger.c */
 
 int mlx5_dev_start(struct rte_eth_dev *);
 void mlx5_dev_stop(struct rte_eth_dev *);
+
+/* mlx5_fdir.c */
+
+int fdir_init_filters_list(struct priv *);
+void priv_fdir_delete_filters_list(struct priv *);
+void priv_fdir_disable(struct priv *);
+void priv_fdir_enable(struct priv *);
+int mlx5_dev_filter_ctrl(struct rte_eth_dev *, enum rte_filter_type,
+			 enum rte_filter_op, void *);
 
 #endif /* RTE_PMD_MLX5_H_ */

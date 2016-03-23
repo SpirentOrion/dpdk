@@ -47,6 +47,22 @@ This section should contain new features added in this release. Sample format:
   A new function ``rte_pktmbuf_alloc_bulk()`` has been added to allow the user
   to allocate a bulk of mbufs.
 
+* **Restored vmxnet3 Tx data ring.**
+
+  Tx data ring has been shown to improve small pkt forwarding performance
+  on vSphere environment.
+
+* **Added vmxnet3 Tx L4 checksum offload.**
+
+  Support TCP/UDP checksum offload.
+
+* **Added vmxnet3 TSO support.**
+
+* **Added vmxnet3 support for jumbo frames.**
+
+  Added support for linking multi-segment buffers together to
+  handle Jumbo packets.
+
 * **Virtio 1.0.**
 
   Enabled virtio 1.0 support for virtio pmd driver.
@@ -63,6 +79,17 @@ This section should contain new features added in this release. Sample format:
   vanilla Linux virtio guest.
 
 * **Added vhost-user live migration support.**
+
+* **Added multicast promiscuous mode support on VF for ixgbe.**
+
+  Added multicast promiscuous mode support on ixgbe VF driver. So all the VFs
+  can receive the multicast packets.
+
+  Please note if we want to use this promiscuous mode, we need both PF and VF
+  driver to support it. The reason is this VF feature is configured on PF.
+  If use kernel PF driver + dpdk VF driver, make sure kernel PF driver support
+  VF multicast promiscuous mode. If use dpdk PF + dpdk VF, better make sure PF
+  driver is the same version as VF.
 
 * **Added support for E-tag on X550.**
 
@@ -95,13 +122,94 @@ This section should contain new features added in this release. Sample format:
     default VxLAN port number is 4789 but this can be updated
     programmatically.
 
+* **Added new X550EM_a devices.**
+
+  Added new X550EM_a devices and their mac types, X550EM_a and X550EM_a_vf.
+  Updated the code to use the new devices and mac types.
+
+* **Added x550em_x V2 device support.**
+
+  Only x550em_x V1 was supported before. Now V2 is supported.
+  A mask for V1 and V2 is defined and used to support both.
+
+* **Supported link speed auto-negotiation on X550EM_X**
+
+  Normally the auto-negotiation is supported by FW. SW need not care about
+  that. But on x550em_x, FW doesn't support auto-neg. As the ports of x550em_x
+  are 10G, if we connect the port with a peer which is 1G, the link will always
+  be down.
+  We added the support of auto-neg by SW to avoid this link down issue.
+
+* **Added sw-firmware sync on X550EM_a.**
+
+  Added support for sw-firmware sync for resource sharing.
+  Use the PHY token, shared between sw-fw for PHY access on X550EM_a.
+
+* **Updated the i40e base driver.**
+
+  The i40e base driver was updated with changes including the
+  following:
+
+  * Use Rx control AQ commands to read/write Rx control registers.
+  * Add new X722 device IDs, and removed X710 one was never used.
+  * Expose registers for HASH/FD input set configuring.
+
 * **Enabled PCI extended tag for i40e.**
 
   It enabled extended tag by checking and writing corresponding PCI config
   space bytes, to boost the performance. In the meanwhile, it deprecated the
   legacy way via reading/writing sysfile supported by kernel module igb_uio.
 
+* **Added i40e support for setting mac addresses.**
+
+* **Added dump of i40e registers and EEPROM.**
+
 * **Supported ether type setting of single and double VLAN for i40e**
+
+* **Added VMDQ DCB mode in i40e.**
+
+  Added support for DCB in VMDQ mode to i40e driver.
+
+* **Added i40e VEB switching support.**
+
+* **Added fm10k Rx interrupt support.**
+
+* **Optimized fm10k Tx.**
+
+  * Free multiple mbufs at a time to reduce freeing mbuf cycles.
+
+* **Handled error flags in fm10k vector Rx.**
+
+  Parse err flags in Rx desc and set error bits in mbuf with vector instructions.
+
+* **Added fm10k FTAG based forwarding support.**
+
+* **Added mlx5 flow director support.**
+
+  Added flow director support (RTE_FDIR_MODE_PERFECT and
+  RTE_FDIR_MODE_PERFECT_MAC_VLAN).
+
+  Only available with Mellanox OFED >= 3.2.
+
+* **Added mlx5 RX VLAN stripping support.**
+
+  Added support for RX VLAN stripping.
+
+  Only available with Mellanox OFED >= 3.2.
+
+* **Changed szedata2 type of driver from vdev to pdev.**
+
+  Previously szedata2 device had to be added by ``--vdev`` option.
+  Now szedata2 PMD recognises the device automatically during EAL
+  initialization.
+
+* **Added szedata2 functions for setting link up/down.**
+
+* **Added szedata2 promiscuous and allmulticast modes.**
+
+* **Added af_packet dynamic removal function.**
+
+  Af_packet device can now be detached using API, like other PMD devices.
 
 * **Increased number of next hops for LPM IPv4 to 2^24.**
 
@@ -127,6 +235,20 @@ This section should contain new features added in this release. Sample format:
 
   Added new Crypto PMD to support null crypto operations in SW.
 
+* **Improved IP Pipeline Application.**
+
+  The following features have been added to ip_pipeline application;
+
+  * Added CPU utilization measurement and idle cycle rate computation.
+  * Added link idenfication support through existing port-mask option or by
+    specifying PCI device in every LINK section in the configuration file.
+  * Added load balancing support in passthrough pipeline.
+
+* **Added IPsec security gateway example.**
+
+  New application implementing an IPsec Security Gateway.
+
+
 Resolved Issues
 ---------------
 
@@ -151,6 +273,63 @@ Drivers
   Fixed issue in ethdev library that the structure for setting
   fdir's mask and flow entry was not consistent in byte ordering.
 
+* **cxgbe: Fixed crash due to incorrect size allocated for RSS table.**
+
+  Fixed a segfault that occurs when accessing part of port 0's RSS
+  table that gets overwritten by subsequent port 1's part of the RSS
+  table due to incorrect size allocated for each entry in the table.
+
+* **cxgbe: Fixed setting wrong device MTU.**
+
+  Fixed an incorrect device MTU being set due to ethernet header and
+  CRC lengths being added twice.
+
+* **ixgbe: Fixed zeroed VF mac address.**
+
+  Resolved an issue where VF mac address is zeroed out in cases where the VF
+  driver is loaded while the PF interface is down.
+  The solution is to only set it when we get an ACK from the PF.
+
+* **ixgbe: Fixed setting flow director flag twice.**
+
+  Resolved an issue where packets were being dropped when switching to perfect
+  filters mode.
+
+* **ixgbe: Set MDIO speed after MAC reset.**
+
+  The MDIO clock speed must be reconfigured after the MAC reset. The MDIO clock
+  speed becomes invalid, therefore the driver reads invalid PHY register values.
+  The driver now set the MDIO clock speed prior to initializing PHY ops and
+  again after the MAC reset.
+
+* **i40e: Generated MAC address for each VFs.**
+
+  It generates a MAC address for each VFs during PF host initialization,
+  and keeps the VF MAC address the same among different VF launch.
+
+* **i40e: Fixed failure of reading/writing Rx control registers.**
+
+  Fixed i40e issue of failing to read/write rx control registers when
+  under stress with traffic, which might result in application launch
+  failure.
+
+* **mlx5: Fixed possible crash during initialization.**
+
+  A crash could occur when failing to allocate private device context.
+
+* **mlx5: Added port type check.**
+
+  Done to prevent port initialization on non-Ethernet link layers and
+  to report an error.
+
+* **mlx5: Applied VLAN filtering to broadcast and IPv6 multicast flows.**
+
+  Prevented reception of multicast frames outside of configured VLANs.
+
+* **mlx5: Fixed RX checksum offload in non L3/L4 packets.**
+
+  Fixed report of bad checksum for packets of unknown type.
+
 * **aesni_mb: Fixed wrong return value when creating a device.**
 
   cryptodev_aesni_mb_init() was returning the device id of the device created,
@@ -172,18 +351,25 @@ Libraries
   Fix crc32c hash functions to return a valid crc32c value for data lengths
   not multiple of 4 bytes.
 
+* **librte_port: Fixed segmentation fault for ring and ethdev writer nodrop.**
+
+  Fixed core dump issue on txq and swq when dropless is set to yes.
+
 
 Examples
 ~~~~~~~~
+
+* **l3fwd-power: Fixed memory leak for non-IP packet.**
+
+  Fixed issue in l3fwd-power where, on receiving packets of types
+  other than IPv4 or IPv6, the mbuf was not released, and caused
+  a memory leak.
 
 * **examples/vhost: Fixed frequent mbuf allocation failure.**
 
   vhost-switch often fails to allocate mbuf when dequeue from vring because it
   wrongly calculates the number of mbufs needed.
 
-* **examples/ipsec-secgw: ipsec security gateway**
-
-  New application implementing an IPsec Security Gateway.
 
 Other
 ~~~~~
@@ -221,6 +407,9 @@ This section should contain API changes. Sample format:
 
 * A parameter ``vlan_type`` has been added to the function
   ``rte_eth_dev_set_vlan_ether_type``.
+
+* AF_packet device init function is no longer public. Device should be attached
+  with API.
 
 * The LPM ``next_hop`` field is extended from 8 bits to 24 bits for IPv4
   while keeping ABI compatibility.

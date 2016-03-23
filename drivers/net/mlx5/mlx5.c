@@ -88,10 +88,14 @@ mlx5_dev_close(struct rte_eth_dev *dev)
 	      ((priv->ctx != NULL) ? priv->ctx->device->name : ""));
 	/* In case mlx5_dev_stop() has not been called. */
 	priv_dev_interrupt_handler_uninstall(priv, dev);
-	priv_allmulticast_disable(priv);
-	priv_promiscuous_disable(priv);
+	priv_special_flow_disable_all(priv);
 	priv_mac_addrs_disable(priv);
 	priv_destroy_hash_rxqs(priv);
+
+	/* Remove flow director elements. */
+	priv_fdir_disable(priv);
+	priv_fdir_delete_filters_list(priv);
+
 	/* Prevent crashes when queues are still in use. */
 	dev->rx_pkt_burst = removed_rx_burst;
 	dev->tx_pkt_burst = removed_tx_burst;
@@ -162,11 +166,19 @@ static const struct eth_dev_ops mlx5_dev_ops = {
 	.flow_ctrl_set = mlx5_dev_set_flow_ctrl,
 	.mac_addr_remove = mlx5_mac_addr_remove,
 	.mac_addr_add = mlx5_mac_addr_add,
+	.mac_addr_set = mlx5_mac_addr_set,
 	.mtu_set = mlx5_dev_set_mtu,
+#ifdef HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS
+	.vlan_strip_queue_set = mlx5_vlan_strip_queue_set,
+	.vlan_offload_set = mlx5_vlan_offload_set,
+#endif /* HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS */
 	.reta_update = mlx5_dev_rss_reta_update,
 	.reta_query = mlx5_dev_rss_reta_query,
 	.rss_hash_update = mlx5_rss_hash_update,
 	.rss_hash_conf_get = mlx5_rss_hash_conf_get,
+#ifdef MLX5_FDIR_SUPPORT
+	.filter_ctrl = mlx5_dev_filter_ctrl,
+#endif /* MLX5_FDIR_SUPPORT */
 };
 
 static struct {
@@ -314,7 +326,11 @@ mlx5_pci_devinit(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 #ifdef HAVE_EXP_QUERY_DEVICE
 		exp_device_attr.comp_mask =
 			IBV_EXP_DEVICE_ATTR_EXP_CAP_FLAGS |
-			IBV_EXP_DEVICE_ATTR_RX_HASH;
+			IBV_EXP_DEVICE_ATTR_RX_HASH |
+#ifdef HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS
+			IBV_EXP_DEVICE_ATTR_VLAN_OFFLOADS |
+#endif /* HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS */
+			0;
 #endif /* HAVE_EXP_QUERY_DEVICE */
 
 		DEBUG("using port %u (%08" PRIx32 ")", port, test);
@@ -329,6 +345,13 @@ mlx5_pci_devinit(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 			ERROR("port query failed: %s", strerror(err));
 			goto port_error;
 		}
+
+		if (port_attr.link_layer != IBV_LINK_LAYER_ETHERNET) {
+			ERROR("port %d is not configured in Ethernet mode",
+			      port);
+			goto port_error;
+		}
+
 		if (port_attr.state != IBV_PORT_ACTIVE)
 			DEBUG("port %d is not active: \"%s\" (%d)",
 			      port, ibv_port_state_str(port_attr.state),
@@ -385,6 +408,12 @@ mlx5_pci_devinit(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 			priv->ind_table_max_size = RSS_INDIRECTION_TABLE_SIZE;
 		DEBUG("maximum RX indirection table size is %u",
 		      priv->ind_table_max_size);
+#ifdef HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS
+		priv->hw_vlan_strip = !!(exp_device_attr.wq_vlan_offloads_cap &
+					 IBV_EXP_RECEIVE_WQ_CVLAN_STRIP);
+#endif /* HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS */
+		DEBUG("VLAN stripping is %ssupported",
+		      (priv->hw_vlan_strip ? "" : "not "));
 
 #else /* HAVE_EXP_QUERY_DEVICE */
 		priv->ind_table_max_size = RSS_INDIRECTION_TABLE_SIZE;
@@ -415,13 +444,14 @@ mlx5_pci_devinit(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 		     mac.addr_bytes[0], mac.addr_bytes[1],
 		     mac.addr_bytes[2], mac.addr_bytes[3],
 		     mac.addr_bytes[4], mac.addr_bytes[5]);
-		/* Register MAC and broadcast addresses. */
+		/* Register MAC address. */
 		claim_zero(priv_mac_addr_add(priv, 0,
 					     (const uint8_t (*)[ETHER_ADDR_LEN])
 					     mac.addr_bytes));
-		claim_zero(priv_mac_addr_add(priv, (RTE_DIM(priv->mac) - 1),
-					     &(const uint8_t [ETHER_ADDR_LEN])
-					     { "\xff\xff\xff\xff\xff\xff" }));
+		/* Initialize FD filters list. */
+		err = fdir_init_filters_list(priv);
+		if (err)
+			goto port_error;
 #ifndef NDEBUG
 		{
 			char ifname[IF_NAMESIZE];
@@ -471,8 +501,10 @@ mlx5_pci_devinit(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 		continue;
 
 port_error:
-		rte_free(priv->rss_conf);
-		rte_free(priv);
+		if (priv) {
+			rte_free(priv->rss_conf);
+			rte_free(priv);
+		}
 		if (pd)
 			claim_zero(ibv_dealloc_pd(pd));
 		if (ctx)

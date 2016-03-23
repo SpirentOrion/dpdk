@@ -617,8 +617,14 @@ rte_eal_pci_ioport_map(struct rte_pci_device *dev, int bar,
 		break;
 #endif
 	case RTE_KDRV_IGB_UIO:
-	case RTE_KDRV_UIO_GENERIC:
 		ret = pci_uio_ioport_map(dev, bar, p);
+		break;
+	case RTE_KDRV_UIO_GENERIC:
+#if defined(RTE_ARCH_X86)
+		ret = pci_ioport_map(dev, bar, p);
+#else
+		ret = pci_uio_ioport_map(dev, bar, p);
+#endif
 		break;
 	case RTE_KDRV_NONE:
 #if defined(RTE_ARCH_X86)
@@ -646,14 +652,17 @@ rte_eal_pci_ioport_read(struct rte_pci_ioport *p,
 		break;
 #endif
 	case RTE_KDRV_IGB_UIO:
+		pci_uio_ioport_read(p, data, len, offset);
+		break;
 	case RTE_KDRV_UIO_GENERIC:
 		pci_uio_ioport_read(p, data, len, offset);
 		break;
-	default:
+	case RTE_KDRV_NONE:
 #if defined(RTE_ARCH_X86)
-		/* special case for x86 ... */
 		pci_uio_ioport_read(p, data, len, offset);
 #endif
+		break;
+	default:
 		break;
 	}
 }
@@ -669,14 +678,17 @@ rte_eal_pci_ioport_write(struct rte_pci_ioport *p,
 		break;
 #endif
 	case RTE_KDRV_IGB_UIO:
+		pci_uio_ioport_write(p, data, len, offset);
+		break;
 	case RTE_KDRV_UIO_GENERIC:
 		pci_uio_ioport_write(p, data, len, offset);
 		break;
-	default:
+	case RTE_KDRV_NONE:
 #if defined(RTE_ARCH_X86)
-		/* special case for x86 ... */
 		pci_uio_ioport_write(p, data, len, offset);
 #endif
+		break;
+	default:
 		break;
 	}
 }
@@ -684,27 +696,31 @@ rte_eal_pci_ioport_write(struct rte_pci_ioport *p,
 int
 rte_eal_pci_ioport_unmap(struct rte_pci_ioport *p)
 {
-	int ret;
+	int ret = -1;
 
 	switch (p->dev->kdrv) {
 #ifdef VFIO_PRESENT
 	case RTE_KDRV_VFIO:
-		ret = -1;
 		if (pci_vfio_is_enabled())
 			ret = pci_vfio_ioport_unmap(p);
 		break;
 #endif
 	case RTE_KDRV_IGB_UIO:
-	case RTE_KDRV_UIO_GENERIC:
 		ret = pci_uio_ioport_unmap(p);
 		break;
-	default:
+	case RTE_KDRV_UIO_GENERIC:
 #if defined(RTE_ARCH_X86)
-		/* special case for x86 ... nothing to do */
 		ret = 0;
 #else
-		ret = -1;
+		ret = pci_uio_ioport_unmap(p);
 #endif
+		break;
+	case RTE_KDRV_NONE:
+#if defined(RTE_ARCH_X86)
+		ret = 0;
+#endif
+		break;
+	default:
 		break;
 	}
 

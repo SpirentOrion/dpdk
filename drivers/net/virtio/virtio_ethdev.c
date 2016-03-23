@@ -146,9 +146,7 @@ virtio_send_command(struct virtqueue *vq, struct virtio_pmd_ctrl *ctrl,
 	ctrl->status = status;
 
 	if (!(vq && vq->hw->cvq)) {
-		PMD_INIT_LOG(ERR,
-			     "%s(): Control queue is not supported.",
-			     __func__);
+		PMD_INIT_LOG(ERR, "Control queue is not supported.");
 		return -1;
 	}
 	head = vq->vq_desc_head_idx;
@@ -298,12 +296,12 @@ int virtio_dev_queue_setup(struct rte_eth_dev *dev,
 	vq_size = hw->vtpci_ops->get_queue_num(hw, vtpci_queue_idx);
 	PMD_INIT_LOG(DEBUG, "vq_size: %u nb_desc:%u", vq_size, nb_desc);
 	if (vq_size == 0) {
-		PMD_INIT_LOG(ERR, "%s: virtqueue does not exist", __func__);
+		PMD_INIT_LOG(ERR, "virtqueue does not exist");
 		return -EINVAL;
 	}
 
 	if (!rte_is_power_of_2(vq_size)) {
-		PMD_INIT_LOG(ERR, "%s: virtqueue size is not powerof 2", __func__);
+		PMD_INIT_LOG(ERR, "virtqueue size is not powerof 2");
 		return -EINVAL;
 	}
 
@@ -328,12 +326,11 @@ int virtio_dev_queue_setup(struct rte_eth_dev *dev,
 			RTE_CACHE_LINE_SIZE);
 	}
 	if (vq == NULL) {
-		PMD_INIT_LOG(ERR, "%s: Can not allocate virtqueue", __func__);
+		PMD_INIT_LOG(ERR, "Can not allocate virtqueue");
 		return -ENOMEM;
 	}
 	if (queue_type == VTNET_RQ && vq->sw_ring == NULL) {
-		PMD_INIT_LOG(ERR, "%s: Can not allocate RX soft ring",
-			__func__);
+		PMD_INIT_LOG(ERR, "Can not allocate RX soft ring");
 		rte_free(vq);
 		return -ENOMEM;
 	}
@@ -387,27 +384,47 @@ int virtio_dev_queue_setup(struct rte_eth_dev *dev,
 	vq->virtio_net_hdr_mem = 0;
 
 	if (queue_type == VTNET_TQ) {
+		const struct rte_memzone *hdr_mz;
+		struct virtio_tx_region *txr;
+		unsigned int i;
+
 		/*
 		 * For each xmit packet, allocate a virtio_net_hdr
+		 * and indirect ring elements
 		 */
 		snprintf(vq_name, sizeof(vq_name), "port%d_tvq%d_hdrzone",
-			dev->data->port_id, queue_idx);
-		vq->virtio_net_hdr_mz = rte_memzone_reserve_aligned(vq_name,
-			vq_size * hw->vtnet_hdr_size,
-			socket_id, 0, RTE_CACHE_LINE_SIZE);
-		if (vq->virtio_net_hdr_mz == NULL) {
+			 dev->data->port_id, queue_idx);
+		hdr_mz = rte_memzone_reserve_aligned(vq_name,
+						     vq_size * sizeof(*txr),
+						     socket_id, 0,
+						     RTE_CACHE_LINE_SIZE);
+		if (hdr_mz == NULL) {
 			if (rte_errno == EEXIST)
-				vq->virtio_net_hdr_mz =
-					rte_memzone_lookup(vq_name);
-			if (vq->virtio_net_hdr_mz == NULL) {
+				hdr_mz = rte_memzone_lookup(vq_name);
+			if (hdr_mz == NULL) {
 				rte_free(vq);
 				return -ENOMEM;
 			}
 		}
-		vq->virtio_net_hdr_mem =
-			vq->virtio_net_hdr_mz->phys_addr;
-		memset(vq->virtio_net_hdr_mz->addr, 0,
-			vq_size * hw->vtnet_hdr_size);
+		vq->virtio_net_hdr_mz = hdr_mz;
+		vq->virtio_net_hdr_mem = hdr_mz->phys_addr;
+
+		txr = hdr_mz->addr;
+		memset(txr, 0, vq_size * sizeof(*txr));
+		for (i = 0; i < vq_size; i++) {
+			struct vring_desc *start_dp = txr[i].tx_indir;
+
+			vring_desc_init(start_dp, RTE_DIM(txr[i].tx_indir));
+
+			/* first indirect descriptor is always the tx header */
+			start_dp->addr = vq->virtio_net_hdr_mem
+				+ i * sizeof(*txr)
+				+ offsetof(struct virtio_tx_region, tx_hdr);
+
+			start_dp->len = vq->hw->vtnet_hdr_size;
+			start_dp->flags = VRING_DESC_F_NEXT;
+		}
+
 	} else if (queue_type == VTNET_CQ) {
 		/* Allocate a page for control vq command, data and status */
 		snprintf(vq_name, sizeof(vq_name), "port%d_cvq_hdrzone",
@@ -478,11 +495,13 @@ virtio_dev_close(struct rte_eth_dev *dev)
 
 	PMD_INIT_LOG(DEBUG, "virtio_dev_close");
 
+	if (hw->started == 1)
+		virtio_dev_stop(dev);
+
 	/* reset the NIC */
 	if (pci_dev->driver->drv_flags & RTE_PCI_DRV_INTR_LSC)
 		vtpci_irq_config(hw, VIRTIO_MSI_NO_VECTOR);
 	vtpci_reset(hw);
-	hw->started = 0;
 	virtio_dev_free_mbufs(dev);
 	virtio_free_queues(dev);
 }
@@ -1129,9 +1148,6 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 		hw->max_tx_queues = 1;
 	}
 
-	eth_dev->data->nb_rx_queues = hw->max_rx_queues;
-	eth_dev->data->nb_tx_queues = hw->max_tx_queues;
-
 	PMD_INIT_LOG(DEBUG, "hw->max_rx_queues=%d   hw->max_tx_queues=%d",
 			hw->max_rx_queues, hw->max_tx_queues);
 	PMD_INIT_LOG(DEBUG, "port %d vendorID=0x%x deviceID=0x%x",
@@ -1159,10 +1175,9 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
 		return -EPERM;
 
-	if (hw->started == 1) {
-		virtio_dev_stop(eth_dev);
-		virtio_dev_close(eth_dev);
-	}
+	/* Close it anyway since there's no way to know if closed */
+	virtio_dev_close(eth_dev);
+
 	pci_dev = eth_dev->pci_dev;
 
 	eth_dev->dev_ops = NULL;
@@ -1364,8 +1379,11 @@ static void
 virtio_dev_stop(struct rte_eth_dev *dev)
 {
 	struct rte_eth_link link;
+	struct virtio_hw *hw = dev->data->dev_private;
 
 	PMD_INIT_LOG(DEBUG, "stop");
+
+	hw->started = 0;
 
 	if (dev->data->dev_conf.intr_conf.lsc)
 		rte_intr_disable(&dev->pci_dev->intr_handle);

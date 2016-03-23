@@ -2331,15 +2331,6 @@ static void bnx2x_set_fp_rx_buf_size(struct bnx2x_softc *sc)
 		/* get the Rx buffer size for RX frames */
 		sc->fp[i].rx_buf_size =
 		    (IP_HEADER_ALIGNMENT_PADDING + ETH_OVERHEAD + sc->mtu);
-
-		/* get the mbuf allocation size for RX frames */
-		if (sc->fp[i].rx_buf_size <= MCLBYTES) {
-			sc->fp[i].mbuf_alloc_size = MCLBYTES;
-		} else if (sc->fp[i].rx_buf_size <= BNX2X_PAGE_SIZE) {
-			sc->fp[i].mbuf_alloc_size = PAGE_SIZE;
-		} else {
-			sc->fp[i].mbuf_alloc_size = MJUM9BYTES;
-		}
 	}
 }
 
@@ -9578,8 +9569,13 @@ static int bnx2x_pci_get_caps(struct bnx2x_softc *sc)
 
 static void bnx2x_init_rte(struct bnx2x_softc *sc)
 {
-	sc->max_tx_queues = 128;
-	sc->max_rx_queues = 128;
+	if (IS_VF(sc)) {
+		sc->max_tx_queues = BNX2X_VF_MAX_QUEUES_PER_VF;
+		sc->max_rx_queues = BNX2X_VF_MAX_QUEUES_PER_VF;
+	} else {
+		sc->max_tx_queues = 128;
+		sc->max_rx_queues = 128;
+	}
 }
 
 #define FW_HEADER_LEN 104

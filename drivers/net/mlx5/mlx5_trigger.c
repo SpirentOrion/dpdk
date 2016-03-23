@@ -72,11 +72,7 @@ mlx5_dev_start(struct rte_eth_dev *dev)
 	DEBUG("%p: allocating and configuring hash RX queues", (void *)dev);
 	err = priv_create_hash_rxqs(priv);
 	if (!err)
-		err = priv_promiscuous_enable(priv);
-	if (!err)
-		err = priv_mac_addrs_enable(priv);
-	if (!err)
-		err = priv_allmulticast_enable(priv);
+		err = priv_rehash_flows(priv);
 	if (!err)
 		priv->started = 1;
 	else {
@@ -84,11 +80,12 @@ mlx5_dev_start(struct rte_eth_dev *dev)
 		      " %s",
 		      (void *)priv, strerror(err));
 		/* Rollback. */
-		priv_allmulticast_disable(priv);
-		priv_promiscuous_disable(priv);
+		priv_special_flow_disable_all(priv);
 		priv_mac_addrs_disable(priv);
 		priv_destroy_hash_rxqs(priv);
 	}
+	if (dev->data->dev_conf.fdir_conf.mode != RTE_FDIR_MODE_NONE)
+		priv_fdir_enable(priv);
 	priv_dev_interrupt_handler_install(priv, dev);
 	priv_unlock(priv);
 	return -err;
@@ -113,10 +110,10 @@ mlx5_dev_stop(struct rte_eth_dev *dev)
 		return;
 	}
 	DEBUG("%p: cleaning up and destroying hash RX queues", (void *)dev);
-	priv_allmulticast_disable(priv);
-	priv_promiscuous_disable(priv);
+	priv_special_flow_disable_all(priv);
 	priv_mac_addrs_disable(priv);
 	priv_destroy_hash_rxqs(priv);
+	priv_fdir_disable(priv);
 	priv_dev_interrupt_handler_uninstall(priv, dev);
 	priv->started = 0;
 	priv_unlock(priv);

@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2015 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -61,13 +61,14 @@
  * Default values for port configuration
  */
 #define IGB_DEFAULT_RX_FREE_THRESH  32
-#define IGB_DEFAULT_RX_PTHRESH      8
-#define IGB_DEFAULT_RX_HTHRESH      8
-#define IGB_DEFAULT_RX_WTHRESH      0
 
-#define IGB_DEFAULT_TX_PTHRESH      32
-#define IGB_DEFAULT_TX_HTHRESH      0
-#define IGB_DEFAULT_TX_WTHRESH      0
+#define IGB_DEFAULT_RX_PTHRESH      ((hw->mac.type == e1000_i354) ? 12 : 8)
+#define IGB_DEFAULT_RX_HTHRESH      8
+#define IGB_DEFAULT_RX_WTHRESH      ((hw->mac.type == e1000_82576) ? 1 : 4)
+
+#define IGB_DEFAULT_TX_PTHRESH      ((hw->mac.type == e1000_i354) ? 20 : 8)
+#define IGB_DEFAULT_TX_HTHRESH      1
+#define IGB_DEFAULT_TX_WTHRESH      ((hw->mac.type == e1000_82576) ? 1 : 16)
 
 #define IGB_HKEY_MAX_INDEX 10
 
@@ -154,6 +155,10 @@ static int igbvf_dev_configure(struct rte_eth_dev *dev);
 static int igbvf_dev_start(struct rte_eth_dev *dev);
 static void igbvf_dev_stop(struct rte_eth_dev *dev);
 static void igbvf_dev_close(struct rte_eth_dev *dev);
+static void igbvf_promiscuous_enable(struct rte_eth_dev *dev);
+static void igbvf_promiscuous_disable(struct rte_eth_dev *dev);
+static void igbvf_allmulticast_enable(struct rte_eth_dev *dev);
+static void igbvf_allmulticast_disable(struct rte_eth_dev *dev);
 static int eth_igbvf_link_update(struct e1000_hw *hw);
 static void eth_igbvf_stats_get(struct rte_eth_dev *dev,
 				struct rte_eth_stats *rte_stats);
@@ -371,6 +376,10 @@ static const struct eth_dev_ops igbvf_eth_dev_ops = {
 	.dev_start            = igbvf_dev_start,
 	.dev_stop             = igbvf_dev_stop,
 	.dev_close            = igbvf_dev_close,
+	.promiscuous_enable   = igbvf_promiscuous_enable,
+	.promiscuous_disable  = igbvf_promiscuous_disable,
+	.allmulticast_enable  = igbvf_allmulticast_enable,
+	.allmulticast_disable = igbvf_allmulticast_disable,
 	.link_update          = eth_igb_link_update,
 	.stats_get            = eth_igbvf_stats_get,
 	.xstats_get           = eth_igbvf_xstats_get,
@@ -2834,6 +2843,7 @@ igbvf_dev_close(struct rte_eth_dev *dev)
 	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct e1000_adapter *adapter =
 		E1000_DEV_PRIVATE(dev->data->dev_private);
+	struct ether_addr addr;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -2842,6 +2852,56 @@ igbvf_dev_close(struct rte_eth_dev *dev)
 	igbvf_dev_stop(dev);
 	adapter->stopped = 1;
 	igb_dev_free_queues(dev);
+
+	/**
+	 * reprogram the RAR with a zero mac address,
+	 * to ensure that the VF traffic goes to the PF
+	 * after stop, close and detach of the VF.
+	 **/
+
+	memset(&addr, 0, sizeof(addr));
+	igbvf_default_mac_addr_set(dev, &addr);
+}
+
+static void
+igbvf_promiscuous_enable(struct rte_eth_dev *dev)
+{
+	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	/* Set both unicast and multicast promisc */
+	e1000_promisc_set_vf(hw, e1000_promisc_enabled);
+}
+
+static void
+igbvf_promiscuous_disable(struct rte_eth_dev *dev)
+{
+	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	/* If in allmulticast mode leave multicast promisc */
+	if (dev->data->all_multicast == 1)
+		e1000_promisc_set_vf(hw, e1000_promisc_multicast);
+	else
+		e1000_promisc_set_vf(hw, e1000_promisc_disabled);
+}
+
+static void
+igbvf_allmulticast_enable(struct rte_eth_dev *dev)
+{
+	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	/* In promiscuous mode multicast promisc already set */
+	if (dev->data->promiscuous == 0)
+		e1000_promisc_set_vf(hw, e1000_promisc_multicast);
+}
+
+static void
+igbvf_allmulticast_disable(struct rte_eth_dev *dev)
+{
+	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	/* In promiscuous mode leave multicast promisc enabled */
+	if (dev->data->promiscuous == 0)
+		e1000_promisc_set_vf(hw, e1000_promisc_disabled);
 }
 
 static int igbvf_set_vfta(struct e1000_hw *hw, uint16_t vid, bool on)

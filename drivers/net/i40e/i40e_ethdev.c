@@ -61,9 +61,8 @@
 #include "i40e_ethdev.h"
 #include "i40e_rxtx.h"
 #include "i40e_pf.h"
+#include "i40e_regs.h"
 
-/* Maximun number of MAC addresses */
-#define I40E_NUM_MACADDR_MAX       64
 #define I40E_CLEAR_PXE_WAIT_MS     200
 
 /* Maximun number of capability elements */
@@ -136,13 +135,6 @@
 #define I40E_MAX_PERCENT            100
 #define I40E_DEFAULT_DCB_APP_NUM    1
 #define I40E_DEFAULT_DCB_APP_PRIO   3
-
-#define I40E_PRTQF_FD_INSET(_i, _j)  (0x00250000 + ((_i) * 64 + (_j) * 32))
-#define I40E_GLQF_FD_MSK(_i, _j)     (0x00267200 + ((_i) * 4 + (_j) * 8))
-#define I40E_GLQF_FD_MSK_FIELD       0x0000FFFF
-#define I40E_GLQF_HASH_INSET(_i, _j) (0x00267600 + ((_i) * 4 + (_j) * 8))
-#define I40E_GLQF_HASH_MSK(_i, _j)   (0x00267A00 + ((_i) * 4 + (_j) * 8))
-#define I40E_GLQF_HASH_MSK_FIELD      0x0000FFFF
 
 #define I40E_INSET_NONE            0x00000000000000000ULL
 
@@ -432,6 +424,18 @@ static int i40e_dev_rx_queue_intr_enable(struct rte_eth_dev *dev,
 static int i40e_dev_rx_queue_intr_disable(struct rte_eth_dev *dev,
 					  uint16_t queue_id);
 
+static int i40e_get_reg_length(struct rte_eth_dev *dev);
+
+static int i40e_get_regs(struct rte_eth_dev *dev,
+			 struct rte_dev_reg_info *regs);
+
+static int i40e_get_eeprom_length(struct rte_eth_dev *dev);
+
+static int i40e_get_eeprom(struct rte_eth_dev *dev,
+			   struct rte_dev_eeprom_info *eeprom);
+
+static void i40e_set_default_mac_addr(struct rte_eth_dev *dev,
+				      struct ether_addr *mac_addr);
 
 static const struct rte_pci_id pci_id_i40e_map[] = {
 #define RTE_PCI_DEV_ID_DECL_I40E(vend, dev) {RTE_PCI_DEVICE(vend, dev)},
@@ -500,6 +504,11 @@ static const struct eth_dev_ops i40e_eth_dev_ops = {
 	.timesync_adjust_time         = i40e_timesync_adjust_time,
 	.timesync_read_time           = i40e_timesync_read_time,
 	.timesync_write_time          = i40e_timesync_write_time,
+	.get_reg_length	              = i40e_get_reg_length,
+	.get_reg                      = i40e_get_regs,
+	.get_eeprom_length            = i40e_get_eeprom_length,
+	.get_eeprom                   = i40e_get_eeprom,
+	.mac_addr_set                 = i40e_set_default_mac_addr,
 };
 
 /* store statistics names and its offset in stats structure */
@@ -2412,6 +2421,13 @@ i40e_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 	struct i40e_pf *pf = I40E_DEV_PRIVATE_TO_PF(dev->data->dev_private);
 	struct i40e_vsi *vsi = pf->main_vsi;
 
+	if (mask & ETH_VLAN_FILTER_MASK) {
+		if (dev->data->dev_conf.rxmode.hw_vlan_filter)
+			i40e_vsi_config_vlan_filter(vsi, TRUE);
+		else
+			i40e_vsi_config_vlan_filter(vsi, FALSE);
+	}
+
 	if (mask & ETH_VLAN_STRIP_MASK) {
 		/* Enable or disable VLAN stripping */
 		if (dev->data->dev_conf.rxmode.hw_vlan_strip)
@@ -2663,7 +2679,10 @@ i40e_macaddr_add(struct rte_eth_dev *dev,
 	}
 
 	(void)rte_memcpy(&mac_filter.mac_addr, mac_addr, ETHER_ADDR_LEN);
-	mac_filter.filter_type = RTE_MACVLAN_PERFECT_MATCH;
+	if (dev->data->dev_conf.rxmode.hw_vlan_filter)
+		mac_filter.filter_type = RTE_MACVLAN_PERFECT_MATCH;
+	else
+		mac_filter.filter_type = RTE_MAC_PERFECT_MATCH;
 
 	if (pool == 0)
 		vsi = pf->main_vsi;
@@ -3716,7 +3735,7 @@ i40e_veb_setup(struct i40e_pf *pf, struct i40e_vsi *vsi)
 	veb->uplink_seid = vsi->uplink_seid;
 
 	ret = i40e_aq_add_veb(hw, veb->uplink_seid, vsi->seid,
-		I40E_DEFAULT_TCMAP, false, false, &veb->seid, NULL);
+		I40E_DEFAULT_TCMAP, false, &veb->seid, false, NULL);
 
 	if (ret != I40E_SUCCESS) {
 		PMD_DRV_LOG(ERR, "Add veb failed, aq_err: %d",
@@ -3840,7 +3859,6 @@ i40e_update_default_filter_setting(struct i40e_vsi *vsi)
 	return i40e_vsi_add_mac(vsi, &filter);
 }
 
-#define I40E_3_BIT_MASK     0x7
 /*
  * i40e_vsi_get_bw_config - Query VSI BW Information
  * @vsi: the VSI to be queried
@@ -3890,7 +3908,7 @@ i40e_vsi_get_bw_config(struct i40e_vsi *vsi)
 		/* 4 bits per TC, 4th bit is reserved */
 		vsi->bw_info.bw_ets_max[i] =
 			(uint8_t)((bw_max >> (i * I40E_4_BIT_WIDTH)) &
-				  I40E_3_BIT_MASK);
+				  RTE_LEN2MASK(3, uint8_t));
 		PMD_DRV_LOG(DEBUG, "\tVSI TC%u:share credits %u", i,
 			    vsi->bw_info.bw_ets_share_credits[i]);
 		PMD_DRV_LOG(DEBUG, "\tVSI TC%u:credits %u", i,
@@ -3900,6 +3918,45 @@ i40e_vsi_get_bw_config(struct i40e_vsi *vsi)
 	}
 
 	return I40E_SUCCESS;
+}
+
+/* i40e_enable_pf_lb
+ * @pf: pointer to the pf structure
+ *
+ * allow loopback on pf
+ */
+static inline void
+i40e_enable_pf_lb(struct i40e_pf *pf)
+{
+	struct i40e_hw *hw = I40E_PF_TO_HW(pf);
+	struct i40e_vsi_context ctxt;
+	int ret;
+
+	/* Use the FW API if FW >= v5.0 */
+	if (hw->aq.fw_maj_ver < 5) {
+		PMD_INIT_LOG(ERR, "FW < v5.0, cannot enable loopback");
+		return;
+	}
+
+	memset(&ctxt, 0, sizeof(ctxt));
+	ctxt.seid = pf->main_vsi_seid;
+	ctxt.pf_num = hw->pf_id;
+	ret = i40e_aq_get_vsi_params(hw, &ctxt, NULL);
+	if (ret) {
+		PMD_DRV_LOG(ERR, "cannot get pf vsi config, err %d, aq_err %d",
+			    ret, hw->aq.asq_last_status);
+		return;
+	}
+	ctxt.flags = I40E_AQ_VSI_TYPE_PF;
+	ctxt.info.valid_sections =
+		rte_cpu_to_le_16(I40E_AQ_VSI_PROP_SWITCH_VALID);
+	ctxt.info.switch_id |=
+		rte_cpu_to_le_16(I40E_AQ_VSI_SW_ID_FLAG_ALLOW_LB);
+
+	ret = i40e_aq_update_vsi_params(hw, &ctxt, NULL);
+	if (ret)
+		PMD_DRV_LOG(ERR, "update vsi switch failed, aq_err=%d\n",
+			    hw->aq.asq_last_status);
 }
 
 /* Setup a VSI */
@@ -3937,6 +3994,8 @@ i40e_vsi_setup(struct i40e_pf *pf,
 			PMD_DRV_LOG(ERR, "VEB setup failed");
 			return NULL;
 		}
+		/* set ALLOWLOOPBACk on pf, when veb is created */
+		i40e_enable_pf_lb(pf);
 	}
 
 	vsi = rte_zmalloc("i40e_vsi", sizeof(struct i40e_vsi), 0);
@@ -4109,14 +4168,14 @@ i40e_vsi_setup(struct i40e_pf *pf,
 		ctxt.connection_type = 0x1;
 		ctxt.flags = I40E_AQ_VSI_TYPE_VF;
 
-		/**
-		 * Do not configure switch ID to enable VEB switch by
-		 * I40E_AQ_VSI_SW_ID_FLAG_ALLOW_LB. Because in Fortville,
-		 * if the source mac address of packet sent from VF is not
-		 * listed in the VEB's mac table, the VEB will switch the
-		 * packet back to the VF. Need to enable it when HW issue
-		 * is fixed.
-		 */
+		/* Use the VEB configuration if FW >= v5.0 */
+		if (hw->aq.fw_maj_ver >= 5) {
+			/* Configure switch ID */
+			ctxt.info.valid_sections |=
+			rte_cpu_to_le_16(I40E_AQ_VSI_PROP_SWITCH_VALID);
+			ctxt.info.switch_id =
+			rte_cpu_to_le_16(I40E_AQ_VSI_SW_ID_FLAG_ALLOW_LB);
+		}
 
 		/* Configure port/vlan */
 		ctxt.info.valid_sections |=
@@ -4236,6 +4295,63 @@ fail_mem:
 	return NULL;
 }
 
+/* Configure vlan filter on or off */
+int
+i40e_vsi_config_vlan_filter(struct i40e_vsi *vsi, bool on)
+{
+	int i, num;
+	struct i40e_mac_filter *f;
+	struct i40e_mac_filter_info *mac_filter;
+	enum rte_mac_filter_type desired_filter;
+	int ret = I40E_SUCCESS;
+
+	if (on) {
+		/* Filter to match MAC and VLAN */
+		desired_filter = RTE_MACVLAN_PERFECT_MATCH;
+	} else {
+		/* Filter to match only MAC */
+		desired_filter = RTE_MAC_PERFECT_MATCH;
+	}
+
+	num = vsi->mac_num;
+
+	mac_filter = rte_zmalloc("mac_filter_info_data",
+				 num * sizeof(*mac_filter), 0);
+	if (mac_filter == NULL) {
+		PMD_DRV_LOG(ERR, "failed to allocate memory");
+		return I40E_ERR_NO_MEMORY;
+	}
+
+	i = 0;
+
+	/* Remove all existing mac */
+	TAILQ_FOREACH(f, &vsi->mac_list, next) {
+		mac_filter[i] = f->mac_info;
+		ret = i40e_vsi_delete_mac(vsi, &f->mac_info.mac_addr);
+		if (ret) {
+			PMD_DRV_LOG(ERR, "Update VSI failed to %s vlan filter",
+				    on ? "enable" : "disable");
+			goto DONE;
+		}
+		i++;
+	}
+
+	/* Override with new filter */
+	for (i = 0; i < num; i++) {
+		mac_filter[i].filter_type = desired_filter;
+		ret = i40e_vsi_add_mac(vsi, &mac_filter[i]);
+		if (ret) {
+			PMD_DRV_LOG(ERR, "Update VSI failed to %s vlan filter",
+				    on ? "enable" : "disable");
+			goto DONE;
+		}
+	}
+
+DONE:
+	rte_free(mac_filter);
+	return ret;
+}
+
 /* Configure vlan stripping on or off */
 int
 i40e_vsi_config_vlan_stripping(struct i40e_vsi *vsi, bool on)
@@ -4283,9 +4399,11 @@ i40e_dev_init_vlan(struct rte_eth_dev *dev)
 {
 	struct rte_eth_dev_data *data = dev->data;
 	int ret;
+	int mask = 0;
 
 	/* Apply vlan offload setting */
-	i40e_vlan_offload_set(dev, ETH_VLAN_STRIP_MASK);
+	mask = ETH_VLAN_STRIP_MASK | ETH_VLAN_FILTER_MASK;
+	i40e_vlan_offload_set(dev, mask);
 
 	/* Apply double-vlan setting, not implemented yet */
 
@@ -5719,11 +5837,11 @@ i40e_pf_disable_rss(struct i40e_pf *pf)
 	struct i40e_hw *hw = I40E_PF_TO_HW(pf);
 	uint64_t hena;
 
-	hena = (uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(0));
-	hena |= ((uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(1))) << 32;
+	hena = (uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(0));
+	hena |= ((uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(1))) << 32;
 	hena &= ~I40E_RSS_HENA_ALL;
-	I40E_WRITE_REG(hw, I40E_PFQF_HENA(0), (uint32_t)hena);
-	I40E_WRITE_REG(hw, I40E_PFQF_HENA(1), (uint32_t)(hena >> 32));
+	i40e_write_rx_ctl(hw, I40E_PFQF_HENA(0), (uint32_t)hena);
+	i40e_write_rx_ctl(hw, I40E_PFQF_HENA(1), (uint32_t)(hena >> 32));
 	I40E_WRITE_FLUSH(hw);
 }
 
@@ -5756,7 +5874,7 @@ i40e_set_rss_key(struct i40e_vsi *vsi, uint8_t *key, uint8_t key_len)
 		uint16_t i;
 
 		for (i = 0; i <= I40E_PFQF_HKEY_MAX_INDEX; i++)
-			I40E_WRITE_REG(hw, I40E_PFQF_HKEY(i), hash_key[i]);
+			i40e_write_rx_ctl(hw, I40E_PFQF_HKEY(i), hash_key[i]);
 		I40E_WRITE_FLUSH(hw);
 	}
 
@@ -5785,7 +5903,7 @@ i40e_get_rss_key(struct i40e_vsi *vsi, uint8_t *key, uint8_t *key_len)
 		uint16_t i;
 
 		for (i = 0; i <= I40E_PFQF_HKEY_MAX_INDEX; i++)
-			key_dw[i] = I40E_READ_REG(hw, I40E_PFQF_HKEY(i));
+			key_dw[i] = i40e_read_rx_ctl(hw, I40E_PFQF_HKEY(i));
 	}
 	*key_len = (I40E_PFQF_HKEY_MAX_INDEX + 1) * sizeof(uint32_t);
 
@@ -5806,12 +5924,12 @@ i40e_hw_rss_hash_set(struct i40e_pf *pf, struct rte_eth_rss_conf *rss_conf)
 		return ret;
 
 	rss_hf = rss_conf->rss_hf;
-	hena = (uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(0));
-	hena |= ((uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(1))) << 32;
+	hena = (uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(0));
+	hena |= ((uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(1))) << 32;
 	hena &= ~I40E_RSS_HENA_ALL;
 	hena |= i40e_config_hena(rss_hf);
-	I40E_WRITE_REG(hw, I40E_PFQF_HENA(0), (uint32_t)hena);
-	I40E_WRITE_REG(hw, I40E_PFQF_HENA(1), (uint32_t)(hena >> 32));
+	i40e_write_rx_ctl(hw, I40E_PFQF_HENA(0), (uint32_t)hena);
+	i40e_write_rx_ctl(hw, I40E_PFQF_HENA(1), (uint32_t)(hena >> 32));
 	I40E_WRITE_FLUSH(hw);
 
 	return 0;
@@ -5826,8 +5944,8 @@ i40e_dev_rss_hash_update(struct rte_eth_dev *dev,
 	uint64_t rss_hf = rss_conf->rss_hf & I40E_RSS_OFFLOAD_ALL;
 	uint64_t hena;
 
-	hena = (uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(0));
-	hena |= ((uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(1))) << 32;
+	hena = (uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(0));
+	hena |= ((uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(1))) << 32;
 	if (!(hena & I40E_RSS_HENA_ALL)) { /* RSS disabled */
 		if (rss_hf != 0) /* Enable RSS */
 			return -EINVAL;
@@ -5851,8 +5969,8 @@ i40e_dev_rss_hash_conf_get(struct rte_eth_dev *dev,
 	i40e_get_rss_key(pf->main_vsi, rss_conf->rss_key,
 			 &rss_conf->rss_key_len);
 
-	hena = (uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(0));
-	hena |= ((uint64_t)I40E_READ_REG(hw, I40E_PFQF_HENA(1))) << 32;
+	hena = (uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(0));
+	hena |= ((uint64_t)i40e_read_rx_ctl(hw, I40E_PFQF_HENA(1))) << 32;
 	rss_conf->rss_hf = i40e_parse_hena(hena);
 
 	return 0;
@@ -5938,7 +6056,7 @@ i40e_dev_tunnel_filter_set(struct i40e_pf *pf,
 	/* check tunneled type */
 	switch (tunnel_filter->tunnel_type) {
 	case RTE_TUNNEL_TYPE_VXLAN:
-		tun_type = I40E_AQC_ADD_CLOUD_TNL_TYPE_XVLAN;
+		tun_type = I40E_AQC_ADD_CLOUD_TNL_TYPE_VXLAN;
 		break;
 	case RTE_TUNNEL_TYPE_NVGRE:
 		tun_type = I40E_AQC_ADD_CLOUD_TNL_TYPE_NVGRE_OMAC;
@@ -6366,7 +6484,7 @@ i40e_pf_config_mq_rx(struct i40e_pf *pf)
 static void
 i40e_get_symmetric_hash_enable_per_port(struct i40e_hw *hw, uint8_t *enable)
 {
-	uint32_t reg = I40E_READ_REG(hw, I40E_PRTQF_CTL_0);
+	uint32_t reg = i40e_read_rx_ctl(hw, I40E_PRTQF_CTL_0);
 
 	*enable = reg & I40E_PRTQF_CTL_0_HSYM_ENA_MASK ? 1 : 0;
 }
@@ -6375,7 +6493,7 @@ i40e_get_symmetric_hash_enable_per_port(struct i40e_hw *hw, uint8_t *enable)
 static void
 i40e_set_symmetric_hash_enable_per_port(struct i40e_hw *hw, uint8_t enable)
 {
-	uint32_t reg = I40E_READ_REG(hw, I40E_PRTQF_CTL_0);
+	uint32_t reg = i40e_read_rx_ctl(hw, I40E_PRTQF_CTL_0);
 
 	if (enable > 0) {
 		if (reg & I40E_PRTQF_CTL_0_HSYM_ENA_MASK) {
@@ -6392,7 +6510,7 @@ i40e_set_symmetric_hash_enable_per_port(struct i40e_hw *hw, uint8_t enable)
 		}
 		reg &= ~I40E_PRTQF_CTL_0_HSYM_ENA_MASK;
 	}
-	I40E_WRITE_REG(hw, I40E_PRTQF_CTL_0, reg);
+	i40e_write_rx_ctl(hw, I40E_PRTQF_CTL_0, reg);
 	I40E_WRITE_FLUSH(hw);
 }
 
@@ -6410,7 +6528,7 @@ i40e_get_hash_filter_global_config(struct i40e_hw *hw,
 	enum i40e_filter_pctype pctype;
 
 	memset(g_cfg, 0, sizeof(*g_cfg));
-	reg = I40E_READ_REG(hw, I40E_GLQF_CTL);
+	reg = i40e_read_rx_ctl(hw, I40E_GLQF_CTL);
 	if (reg & I40E_GLQF_CTL_HTOEP_MASK)
 		g_cfg->hash_func = RTE_ETH_HASH_FUNCTION_TOEPLITZ;
 	else
@@ -6425,7 +6543,7 @@ i40e_get_hash_filter_global_config(struct i40e_hw *hw,
 		/* Bit set indicats the coresponding flow type is supported */
 		g_cfg->valid_bit_mask[0] |= (1UL << i);
 		pctype = i40e_flowtype_to_pctype(i);
-		reg = I40E_READ_REG(hw, I40E_GLQF_HSYM(pctype));
+		reg = i40e_read_rx_ctl(hw, I40E_GLQF_HSYM(pctype));
 		if (reg & I40E_GLQF_HSYM_SYMH_ENA_MASK)
 			g_cfg->sym_hash_enable_mask[0] |= (1UL << i);
 	}
@@ -6498,10 +6616,10 @@ i40e_set_hash_filter_global_config(struct i40e_hw *hw,
 		pctype = i40e_flowtype_to_pctype(i);
 		reg = (g_cfg->sym_hash_enable_mask[0] & (1UL << i)) ?
 				I40E_GLQF_HSYM_SYMH_ENA_MASK : 0;
-		I40E_WRITE_REG(hw, I40E_GLQF_HSYM(pctype), reg);
+		i40e_write_rx_ctl(hw, I40E_GLQF_HSYM(pctype), reg);
 	}
 
-	reg = I40E_READ_REG(hw, I40E_GLQF_CTL);
+	reg = i40e_read_rx_ctl(hw, I40E_GLQF_CTL);
 	if (g_cfg->hash_func == RTE_ETH_HASH_FUNCTION_TOEPLITZ) {
 		/* Toeplitz */
 		if (reg & I40E_GLQF_CTL_HTOEP_MASK) {
@@ -6522,7 +6640,7 @@ i40e_set_hash_filter_global_config(struct i40e_hw *hw,
 		/* Use the default, and keep it as it is */
 		goto out;
 
-	I40E_WRITE_REG(hw, I40E_GLQF_CTL, reg);
+	i40e_write_rx_ctl(hw, I40E_GLQF_CTL, reg);
 
 out:
 	I40E_WRITE_FLUSH(hw);
@@ -6945,13 +7063,13 @@ i40e_get_reg_inset(struct i40e_hw *hw, enum rte_filter_type filter,
 	uint64_t reg = 0;
 
 	if (filter == RTE_ETH_FILTER_HASH) {
-		reg = I40E_READ_REG(hw, I40E_GLQF_HASH_INSET(1, pctype));
+		reg = i40e_read_rx_ctl(hw, I40E_GLQF_HASH_INSET(1, pctype));
 		reg <<= I40E_32_BIT_WIDTH;
-		reg |= I40E_READ_REG(hw, I40E_GLQF_HASH_INSET(0, pctype));
+		reg |= i40e_read_rx_ctl(hw, I40E_GLQF_HASH_INSET(0, pctype));
 	} else if (filter == RTE_ETH_FILTER_FDIR) {
-		reg = I40E_READ_REG(hw, I40E_PRTQF_FD_INSET(pctype, 1));
+		reg = i40e_read_rx_ctl(hw, I40E_PRTQF_FD_INSET(pctype, 1));
 		reg <<= I40E_32_BIT_WIDTH;
-		reg |= I40E_READ_REG(hw, I40E_PRTQF_FD_INSET(pctype, 0));
+		reg |= i40e_read_rx_ctl(hw, I40E_PRTQF_FD_INSET(pctype, 0));
 	}
 
 	return reg;
@@ -6960,13 +7078,13 @@ i40e_get_reg_inset(struct i40e_hw *hw, enum rte_filter_type filter,
 static void
 i40e_check_write_reg(struct i40e_hw *hw, uint32_t addr, uint32_t val)
 {
-	uint32_t reg = I40E_READ_REG(hw, addr);
+	uint32_t reg = i40e_read_rx_ctl(hw, addr);
 
 	PMD_DRV_LOG(DEBUG, "[0x%08x] original: 0x%08x\n", addr, reg);
 	if (reg != val)
-		I40E_WRITE_REG(hw, addr, val);
+		i40e_write_rx_ctl(hw, addr, val);
 	PMD_DRV_LOG(DEBUG, "[0x%08x] after: 0x%08x\n", addr,
-		    (uint32_t)I40E_READ_REG(hw, addr));
+		    (uint32_t)i40e_read_rx_ctl(hw, addr));
 }
 
 static int
@@ -6995,8 +7113,9 @@ i40e_set_hash_inset_mask(struct i40e_hw *hw,
 		uint8_t j, count = 0;
 
 		for (i = 0; i < I40E_INSET_MASK_NUM_REG; i++) {
-			reg = I40E_READ_REG(hw, I40E_GLQF_HASH_MSK(i, pctype));
-			if (reg & I40E_GLQF_HASH_MSK_FIELD)
+			reg = i40e_read_rx_ctl(hw,
+					       I40E_GLQF_HASH_MSK(i, pctype));
+			if (reg & I40E_GLQF_HASH_MSK_MASK_MASK)
 				count++;
 		}
 		if (count + num > I40E_INSET_MASK_NUM_REG)
@@ -7036,8 +7155,9 @@ i40e_set_fd_inset_mask(struct i40e_hw *hw,
 		uint8_t j, count = 0;
 
 		for (i = 0; i < I40E_INSET_MASK_NUM_REG; i++) {
-			reg = I40E_READ_REG(hw, I40E_GLQF_FD_MSK(i, pctype));
-			if (reg & I40E_GLQF_FD_MSK_FIELD)
+			reg = i40e_read_rx_ctl(hw,
+					       I40E_GLQF_FD_MSK(i, pctype));
+			if (reg & I40E_GLQF_FD_MSK_MASK_MASK)
 				count++;
 		}
 		if (count + num > I40E_INSET_MASK_NUM_REG)
@@ -7411,7 +7531,7 @@ i40e_hw_init(struct rte_eth_dev *dev)
 	i40e_enable_extended_tag(dev);
 
 	/* clear the PF Queue Filter control register */
-	I40E_WRITE_REG(hw, I40E_PFQF_CTL_0, 0);
+	i40e_write_rx_ctl(hw, I40E_PFQF_CTL_0, 0);
 
 	/* Disable symmetric hash per port */
 	i40e_set_symmetric_hash_enable_per_port(hw, 0);
@@ -8228,6 +8348,8 @@ i40e_vsi_update_queue_mapping(struct i40e_vsi *vsi,
 	int i, total_tc = 0;
 	uint16_t qpnum_per_tc, bsf, qp_idx;
 	struct rte_eth_dev_data *dev_data = I40E_VSI_TO_DEV_DATA(vsi);
+	struct i40e_pf *pf = I40E_VSI_TO_PF(vsi);
+	uint16_t used_queues;
 
 	ret = validate_tcmap_parameter(vsi, enabled_tcmap);
 	if (ret != I40E_SUCCESS)
@@ -8241,7 +8363,18 @@ i40e_vsi_update_queue_mapping(struct i40e_vsi *vsi,
 		total_tc = 1;
 	vsi->enabled_tc = enabled_tcmap;
 
-	qpnum_per_tc = dev_data->nb_rx_queues / total_tc;
+	/* different VSI has different queues assigned */
+	if (vsi->type == I40E_VSI_MAIN)
+		used_queues = dev_data->nb_rx_queues -
+			pf->nb_cfg_vmdq_vsi * RTE_LIBRTE_I40E_QUEUE_NUM_PER_VM;
+	else if (vsi->type == I40E_VSI_VMDQ2)
+		used_queues = RTE_LIBRTE_I40E_QUEUE_NUM_PER_VM;
+	else {
+		PMD_INIT_LOG(ERR, "unsupported VSI type.");
+		return I40E_ERR_NO_AVAILABLE_VSI;
+	}
+
+	qpnum_per_tc = used_queues / total_tc;
 	/* Number of queues per enabled TC */
 	if (qpnum_per_tc == 0) {
 		PMD_INIT_LOG(ERR, " number of queues is less that tcs.");
@@ -8286,6 +8419,93 @@ i40e_vsi_update_queue_mapping(struct i40e_vsi *vsi,
 }
 
 /*
+ * i40e_config_switch_comp_tc - Configure VEB tc setting for given TC map
+ * @veb: VEB to be configured
+ * @tc_map: enabled TC bitmap
+ *
+ * Returns 0 on success, negative value on failure
+ */
+static enum i40e_status_code
+i40e_config_switch_comp_tc(struct i40e_veb *veb, uint8_t tc_map)
+{
+	struct i40e_aqc_configure_switching_comp_bw_config_data veb_bw;
+	struct i40e_aqc_query_switching_comp_bw_config_resp bw_query;
+	struct i40e_aqc_query_switching_comp_ets_config_resp ets_query;
+	struct i40e_hw *hw = I40E_VSI_TO_HW(veb->associate_vsi);
+	enum i40e_status_code ret = I40E_SUCCESS;
+	int i;
+	uint32_t bw_max;
+
+	/* Check if enabled_tc is same as existing or new TCs */
+	if (veb->enabled_tc == tc_map)
+		return ret;
+
+	/* configure tc bandwidth */
+	memset(&veb_bw, 0, sizeof(veb_bw));
+	veb_bw.tc_valid_bits = tc_map;
+	/* Enable ETS TCs with equal BW Share for now across all VSIs */
+	for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++) {
+		if (tc_map & BIT_ULL(i))
+			veb_bw.tc_bw_share_credits[i] = 1;
+	}
+	ret = i40e_aq_config_switch_comp_bw_config(hw, veb->seid,
+						   &veb_bw, NULL);
+	if (ret) {
+		PMD_INIT_LOG(ERR, "AQ command Config switch_comp BW allocation"
+				  " per TC failed = %d",
+				  hw->aq.asq_last_status);
+		return ret;
+	}
+
+	memset(&ets_query, 0, sizeof(ets_query));
+	ret = i40e_aq_query_switch_comp_ets_config(hw, veb->seid,
+						   &ets_query, NULL);
+	if (ret != I40E_SUCCESS) {
+		PMD_DRV_LOG(ERR, "Failed to get switch_comp ETS"
+				 " configuration %u", hw->aq.asq_last_status);
+		return ret;
+	}
+	memset(&bw_query, 0, sizeof(bw_query));
+	ret = i40e_aq_query_switch_comp_bw_config(hw, veb->seid,
+						  &bw_query, NULL);
+	if (ret != I40E_SUCCESS) {
+		PMD_DRV_LOG(ERR, "Failed to get switch_comp bandwidth"
+				 " configuration %u", hw->aq.asq_last_status);
+		return ret;
+	}
+
+	/* store and print out BW info */
+	veb->bw_info.bw_limit = rte_le_to_cpu_16(ets_query.port_bw_limit);
+	veb->bw_info.bw_max = ets_query.tc_bw_max;
+	PMD_DRV_LOG(DEBUG, "switch_comp bw limit:%u", veb->bw_info.bw_limit);
+	PMD_DRV_LOG(DEBUG, "switch_comp max_bw:%u", veb->bw_info.bw_max);
+	bw_max = rte_le_to_cpu_16(bw_query.tc_bw_max[0]) |
+		    (rte_le_to_cpu_16(bw_query.tc_bw_max[1]) <<
+		     I40E_16_BIT_WIDTH);
+	for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++) {
+		veb->bw_info.bw_ets_share_credits[i] =
+				bw_query.tc_bw_share_credits[i];
+		veb->bw_info.bw_ets_credits[i] =
+				rte_le_to_cpu_16(bw_query.tc_bw_limits[i]);
+		/* 4 bits per TC, 4th bit is reserved */
+		veb->bw_info.bw_ets_max[i] =
+			(uint8_t)((bw_max >> (i * I40E_4_BIT_WIDTH)) &
+				  RTE_LEN2MASK(3, uint8_t));
+		PMD_DRV_LOG(DEBUG, "\tVEB TC%u:share credits %u", i,
+			    veb->bw_info.bw_ets_share_credits[i]);
+		PMD_DRV_LOG(DEBUG, "\tVEB TC%u:credits %u", i,
+			    veb->bw_info.bw_ets_credits[i]);
+		PMD_DRV_LOG(DEBUG, "\tVEB TC%u: max credits: %u", i,
+			    veb->bw_info.bw_ets_max[i]);
+	}
+
+	veb->enabled_tc = tc_map;
+
+	return ret;
+}
+
+
+/*
  * i40e_vsi_config_tc - Configure VSI tc setting for given TC map
  * @vsi: VSI to be configured
  * @tc_map: enabled TC bitmap
@@ -8293,7 +8513,7 @@ i40e_vsi_update_queue_mapping(struct i40e_vsi *vsi,
  * Returns 0 on success, negative value on failure
  */
 static enum i40e_status_code
-i40e_vsi_config_tc(struct i40e_vsi *vsi, u8 tc_map)
+i40e_vsi_config_tc(struct i40e_vsi *vsi, uint8_t tc_map)
 {
 	struct i40e_aqc_configure_vsi_tc_bw_data bw_data;
 	struct i40e_vsi_context ctxt;
@@ -8435,15 +8655,27 @@ i40e_dcb_hw_configure(struct i40e_pf *pf,
 	i40e_aq_get_dcb_config(hw, I40E_AQ_LLDP_MIB_LOCAL, 0,
 				     &hw->local_dcbx_config);
 
+	/* if Veb is created, need to update TC of it at first */
+	if (main_vsi->veb) {
+		ret = i40e_config_switch_comp_tc(main_vsi->veb, tc_map);
+		if (ret)
+			PMD_INIT_LOG(WARNING,
+				 "Failed configuring TC for VEB seid=%d\n",
+				 main_vsi->veb->seid);
+	}
 	/* Update each VSI */
 	i40e_vsi_config_tc(main_vsi, tc_map);
 	if (main_vsi->veb) {
 		TAILQ_FOREACH(vsi_list, &main_vsi->veb->head, list) {
-			/* Beside main VSI, only enable default
+			/* Beside main VSI and VMDQ VSIs, only enable default
 			 * TC for other VSIs
 			 */
-			ret = i40e_vsi_config_tc(vsi_list->vsi,
-						I40E_DEFAULT_TCMAP);
+			if (vsi_list->vsi->type == I40E_VSI_VMDQ2)
+				ret = i40e_vsi_config_tc(vsi_list->vsi,
+							 tc_map);
+			else
+				ret = i40e_vsi_config_tc(vsi_list->vsi,
+							 I40E_DEFAULT_TCMAP);
 			if (ret)
 				PMD_INIT_LOG(WARNING,
 					 "Failed configuring TC for VSI seid=%d\n",
@@ -8563,9 +8795,8 @@ i40e_dcb_setup(struct rte_eth_dev *dev)
 		return -ENOTSUP;
 	}
 
-	if (pf->vf_num != 0 ||
-	    (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_VMDQ_FLAG))
-		PMD_INIT_LOG(DEBUG, " DCB only works on main vsi.");
+	if (pf->vf_num != 0)
+		PMD_INIT_LOG(DEBUG, " DCB only works on pf and vmdq vsis.");
 
 	ret = i40e_parse_dcb_configure(dev, &dcb_cfg, &tc_map);
 	if (ret) {
@@ -8590,7 +8821,7 @@ i40e_dev_get_dcb_info(struct rte_eth_dev *dev,
 	struct i40e_vsi *vsi = pf->main_vsi;
 	struct i40e_dcbx_config *dcb_cfg = &hw->local_dcbx_config;
 	uint16_t bsf, tc_mapping;
-	int i;
+	int i, j;
 
 	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_DCB_FLAG)
 		dcb_info->nb_tcs = rte_bsf32(vsi->enabled_tc + 1);
@@ -8601,23 +8832,27 @@ i40e_dev_get_dcb_info(struct rte_eth_dev *dev,
 	for (i = 0; i < dcb_info->nb_tcs; i++)
 		dcb_info->tc_bws[i] = dcb_cfg->etscfg.tcbwtable[i];
 
-	for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++) {
-		if (vsi->enabled_tc & (1 << i)) {
+	j = 0;
+	do {
+		for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++) {
+			if (!(vsi->enabled_tc & (1 << i)))
+				continue;
 			tc_mapping = rte_le_to_cpu_16(vsi->info.tc_mapping[i]);
 			/* only main vsi support multi TCs */
-			dcb_info->tc_queue.tc_rxq[0][i].base =
+			dcb_info->tc_queue.tc_rxq[j][i].base =
 				(tc_mapping & I40E_AQ_VSI_TC_QUE_OFFSET_MASK) >>
 				I40E_AQ_VSI_TC_QUE_OFFSET_SHIFT;
-			dcb_info->tc_queue.tc_txq[0][i].base =
-				dcb_info->tc_queue.tc_rxq[0][i].base;
+			dcb_info->tc_queue.tc_txq[j][i].base =
+				dcb_info->tc_queue.tc_rxq[j][i].base;
 			bsf = (tc_mapping & I40E_AQ_VSI_TC_QUE_NUMBER_MASK) >>
 				I40E_AQ_VSI_TC_QUE_NUMBER_SHIFT;
-			dcb_info->tc_queue.tc_rxq[0][i].nb_queue = 1 << bsf;
-			dcb_info->tc_queue.tc_txq[0][i].nb_queue =
-				dcb_info->tc_queue.tc_rxq[0][i].nb_queue;
+			dcb_info->tc_queue.tc_rxq[j][i].nb_queue = 1 << bsf;
+			dcb_info->tc_queue.tc_txq[j][i].nb_queue =
+				dcb_info->tc_queue.tc_rxq[j][i].nb_queue;
 		}
-	}
-
+		vsi = pf->vmdq[j].vsi;
+		j++;
+	} while (j < RTE_MIN(pf->nb_cfg_vmdq_vsi, ETH_MAX_VMDQ_POOL));
 	return 0;
 }
 
@@ -8672,4 +8907,102 @@ i40e_dev_rx_queue_intr_disable(struct rte_eth_dev *dev, uint16_t queue_id)
 	I40E_WRITE_FLUSH(hw);
 
 	return 0;
+}
+
+static int i40e_get_reg_length(__rte_unused struct rte_eth_dev *dev)
+{
+	/* Highest base addr + 32-bit word */
+	return I40E_GLGEN_STAT_CLEAR + 4;
+}
+
+static int i40e_get_regs(struct rte_eth_dev *dev,
+			 struct rte_dev_reg_info *regs)
+{
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	uint32_t *ptr_data = regs->data;
+	uint32_t reg_idx, arr_idx, arr_idx2, reg_offset;
+	const struct i40e_reg_info *reg_info;
+
+	/* The first few registers have to be read using AQ operations */
+	reg_idx = 0;
+	while (i40e_regs_adminq[reg_idx].name) {
+		reg_info = &i40e_regs_adminq[reg_idx++];
+		for (arr_idx = 0; arr_idx <= reg_info->count1; arr_idx++)
+			for (arr_idx2 = 0;
+					arr_idx2 <= reg_info->count2;
+					arr_idx2++) {
+				reg_offset = arr_idx * reg_info->stride1 +
+					arr_idx2 * reg_info->stride2;
+				ptr_data[reg_offset >> 2] =
+					i40e_read_rx_ctl(hw, reg_offset);
+			}
+	}
+
+	/* The remaining registers can be read using primitives */
+	reg_idx = 0;
+	while (i40e_regs_others[reg_idx].name) {
+		reg_info = &i40e_regs_others[reg_idx++];
+		for (arr_idx = 0; arr_idx <= reg_info->count1; arr_idx++)
+			for (arr_idx2 = 0;
+					arr_idx2 <= reg_info->count2;
+					arr_idx2++) {
+				reg_offset = arr_idx * reg_info->stride1 +
+					arr_idx2 * reg_info->stride2;
+				ptr_data[reg_offset >> 2] =
+					I40E_READ_REG(hw, reg_offset);
+			}
+	}
+
+	return 0;
+}
+
+static int i40e_get_eeprom_length(struct rte_eth_dev *dev)
+{
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	/* Convert word count to byte count */
+	return hw->nvm.sr_size << 1;
+}
+
+static int i40e_get_eeprom(struct rte_eth_dev *dev,
+			   struct rte_dev_eeprom_info *eeprom)
+{
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+	uint16_t *data = eeprom->data;
+	uint16_t offset, length, cnt_words;
+	int ret_code;
+
+	offset = eeprom->offset >> 1;
+	length = eeprom->length >> 1;
+	cnt_words = length;
+
+	if (offset > hw->nvm.sr_size ||
+		offset + length > hw->nvm.sr_size) {
+		PMD_DRV_LOG(ERR, "Requested EEPROM bytes out of range.");
+		return -EINVAL;
+	}
+
+	eeprom->magic = hw->vendor_id | (hw->device_id << 16);
+
+	ret_code = i40e_read_nvm_buffer(hw, offset, &cnt_words, data);
+	if (ret_code != I40E_SUCCESS || cnt_words != length) {
+		PMD_DRV_LOG(ERR, "EEPROM read failed.");
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static void i40e_set_default_mac_addr(struct rte_eth_dev *dev,
+				      struct ether_addr *mac_addr)
+{
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (!is_valid_assigned_ether_addr(mac_addr)) {
+		PMD_DRV_LOG(ERR, "Tried to set invalid MAC address.");
+		return;
+	}
+
+	/* Flags: 0x3 updates port address */
+	i40e_aq_mac_address_write(hw, 0x3, mac_addr->addr_bytes, NULL);
 }

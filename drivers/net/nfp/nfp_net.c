@@ -39,18 +39,7 @@
  * Netronome vNIC DPDK Poll-Mode Driver: Main entry point
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/io.h>
-#include <assert.h>
-#include <time.h>
 #include <math.h>
-#include <inttypes.h>
 
 #include <rte_byteorder.h>
 #include <rte_common.h>
@@ -358,6 +347,7 @@ nfp_net_reset_tx_queue(struct nfp_net_txq *txq)
 	txq->wr_p = 0;
 	txq->rd_p = 0;
 	txq->tail = 0;
+	txq->qcp_rd_p = 0;
 }
 
 static int
@@ -1522,7 +1512,7 @@ static inline void
 nfp_net_tx_cksum(struct nfp_net_txq *txq, struct nfp_net_tx_desc *txd,
 		 struct rte_mbuf *mb)
 {
-	uint16_t ol_flags;
+	uint64_t ol_flags;
 	struct nfp_net_hw *hw = txq->hw;
 
 	if (!(hw->cap & NFP_NET_CFG_CTRL_TXCSUM))
@@ -1543,7 +1533,8 @@ nfp_net_tx_cksum(struct nfp_net_txq *txq, struct nfp_net_tx_desc *txd,
 		break;
 	}
 
-	txd->flags |= PCIE_DESC_TX_CSUM;
+	if (ol_flags & (PKT_TX_IP_CKSUM | PKT_TX_L4_MASK))
+		txd->flags |= PCIE_DESC_TX_CSUM;
 }
 
 /* nfp_net_rx_cksum - set mbuf checksum flags based on RX descriptor flags */
