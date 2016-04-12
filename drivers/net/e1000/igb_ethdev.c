@@ -104,6 +104,7 @@ static void eth_igb_stats_reset(struct rte_eth_dev *dev);
 static void eth_igb_xstats_reset(struct rte_eth_dev *dev);
 static void eth_igb_infos_get(struct rte_eth_dev *dev,
 			      struct rte_eth_dev_info *dev_info);
+static const uint32_t *eth_igb_supported_ptypes_get(struct rte_eth_dev *dev);
 static void eth_igbvf_infos_get(struct rte_eth_dev *dev,
 				struct rte_eth_dev_info *dev_info);
 static int  eth_igb_flow_ctrl_get(struct rte_eth_dev *dev,
@@ -326,6 +327,7 @@ static const struct eth_dev_ops eth_igb_ops = {
 	.stats_reset          = eth_igb_stats_reset,
 	.xstats_reset         = eth_igb_xstats_reset,
 	.dev_infos_get        = eth_igb_infos_get,
+	.dev_supported_ptypes_get = eth_igb_supported_ptypes_get,
 	.mtu_set              = eth_igb_mtu_set,
 	.vlan_filter_set      = eth_igb_vlan_filter_set,
 	.vlan_tpid_set        = eth_igb_vlan_tpid_set,
@@ -387,6 +389,7 @@ static const struct eth_dev_ops igbvf_eth_dev_ops = {
 	.xstats_reset         = eth_igbvf_stats_reset,
 	.vlan_filter_set      = igbvf_vlan_filter_set,
 	.dev_infos_get        = eth_igbvf_infos_get,
+	.dev_supported_ptypes_get = eth_igb_supported_ptypes_get,
 	.rx_queue_setup       = eth_igb_rx_queue_setup,
 	.rx_queue_release     = eth_igb_rx_queue_release,
 	.tx_queue_setup       = eth_igb_tx_queue_setup,
@@ -1130,6 +1133,9 @@ eth_igb_start(struct rte_eth_dev *dev)
 	int ret, mask;
 	uint32_t intr_vector = 0;
 	uint32_t ctrl_ext;
+	uint32_t *speeds;
+	int num_speeds;
+	bool autoneg;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -1230,48 +1236,46 @@ eth_igb_start(struct rte_eth_dev *dev)
 	}
 
 	/* Setup link speed and duplex */
-	switch (dev->data->dev_conf.link_speed) {
-	case ETH_LINK_SPEED_AUTONEG:
-		if (dev->data->dev_conf.link_duplex == ETH_LINK_AUTONEG_DUPLEX)
-			hw->phy.autoneg_advertised = E1000_ALL_SPEED_DUPLEX;
-		else if (dev->data->dev_conf.link_duplex == ETH_LINK_HALF_DUPLEX)
-			hw->phy.autoneg_advertised = E1000_ALL_HALF_DUPLEX;
-		else if (dev->data->dev_conf.link_duplex == ETH_LINK_FULL_DUPLEX)
-			hw->phy.autoneg_advertised = E1000_ALL_FULL_DUPLEX;
-		else
+	speeds = &dev->data->dev_conf.link_speeds;
+	if (*speeds == ETH_LINK_SPEED_AUTONEG) {
+		hw->phy.autoneg_advertised = E1000_ALL_SPEED_DUPLEX;
+	} else {
+		num_speeds = 0;
+		autoneg = (*speeds & ETH_LINK_SPEED_FIXED) == 0;
+
+		/* Reset */
+		hw->phy.autoneg_advertised = 0;
+
+		if (*speeds & ~(ETH_LINK_SPEED_10M_HD | ETH_LINK_SPEED_10M |
+				ETH_LINK_SPEED_100M_HD | ETH_LINK_SPEED_100M |
+				ETH_LINK_SPEED_1G | ETH_LINK_SPEED_FIXED)) {
+			num_speeds = -1;
 			goto error_invalid_config;
-		break;
-	case ETH_LINK_SPEED_10:
-		if (dev->data->dev_conf.link_duplex == ETH_LINK_AUTONEG_DUPLEX)
-			hw->phy.autoneg_advertised = E1000_ALL_10_SPEED;
-		else if (dev->data->dev_conf.link_duplex == ETH_LINK_HALF_DUPLEX)
-			hw->phy.autoneg_advertised = ADVERTISE_10_HALF;
-		else if (dev->data->dev_conf.link_duplex == ETH_LINK_FULL_DUPLEX)
-			hw->phy.autoneg_advertised = ADVERTISE_10_FULL;
-		else
+		}
+		if (*speeds & ETH_LINK_SPEED_10M_HD) {
+			hw->phy.autoneg_advertised |= ADVERTISE_10_HALF;
+			num_speeds++;
+		}
+		if (*speeds & ETH_LINK_SPEED_10M) {
+			hw->phy.autoneg_advertised |= ADVERTISE_10_FULL;
+			num_speeds++;
+		}
+		if (*speeds & ETH_LINK_SPEED_100M_HD) {
+			hw->phy.autoneg_advertised |= ADVERTISE_100_HALF;
+			num_speeds++;
+		}
+		if (*speeds & ETH_LINK_SPEED_100M) {
+			hw->phy.autoneg_advertised |= ADVERTISE_100_FULL;
+			num_speeds++;
+		}
+		if (*speeds & ETH_LINK_SPEED_1G) {
+			hw->phy.autoneg_advertised |= ADVERTISE_1000_FULL;
+			num_speeds++;
+		}
+		if (num_speeds == 0 || (!autoneg && (num_speeds > 1)))
 			goto error_invalid_config;
-		break;
-	case ETH_LINK_SPEED_100:
-		if (dev->data->dev_conf.link_duplex == ETH_LINK_AUTONEG_DUPLEX)
-			hw->phy.autoneg_advertised = E1000_ALL_100_SPEED;
-		else if (dev->data->dev_conf.link_duplex == ETH_LINK_HALF_DUPLEX)
-			hw->phy.autoneg_advertised = ADVERTISE_100_HALF;
-		else if (dev->data->dev_conf.link_duplex == ETH_LINK_FULL_DUPLEX)
-			hw->phy.autoneg_advertised = ADVERTISE_100_FULL;
-		else
-			goto error_invalid_config;
-		break;
-	case ETH_LINK_SPEED_1000:
-		if ((dev->data->dev_conf.link_duplex == ETH_LINK_AUTONEG_DUPLEX) ||
-				(dev->data->dev_conf.link_duplex == ETH_LINK_FULL_DUPLEX))
-			hw->phy.autoneg_advertised = ADVERTISE_1000_FULL;
-		else
-			goto error_invalid_config;
-		break;
-	case ETH_LINK_SPEED_10000:
-	default:
-		goto error_invalid_config;
 	}
+
 	e1000_setup_link(hw);
 
 	if (rte_intr_allow_others(intr_handle)) {
@@ -1303,9 +1307,8 @@ eth_igb_start(struct rte_eth_dev *dev)
 	return 0;
 
 error_invalid_config:
-	PMD_INIT_LOG(ERR, "Invalid link_speed/link_duplex (%u/%u) for port %u",
-		     dev->data->dev_conf.link_speed,
-		     dev->data->dev_conf.link_duplex, dev->data->port_id);
+	PMD_INIT_LOG(ERR, "Invalid advertised speeds (%u) for port %u",
+		     dev->data->dev_conf.link_speeds, dev->data->port_id);
 	igb_dev_clear_queues(dev);
 	return -EINVAL;
 }
@@ -1651,7 +1654,6 @@ eth_igb_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *rte_stats)
 	rte_stats->imissed = stats->mpc;
 	rte_stats->ierrors = stats->crcerrs +
 	                     stats->rlec + stats->ruc + stats->roc +
-	                     rte_stats->imissed +
 	                     stats->rxerrc + stats->algnerrc + stats->cexterr;
 
 	/* Tx Errors */
@@ -1919,6 +1921,37 @@ eth_igb_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 	dev_info->rx_desc_lim = rx_desc_lim;
 	dev_info->tx_desc_lim = tx_desc_lim;
+
+	dev_info->speed_capa = ETH_LINK_SPEED_10M_HD | ETH_LINK_SPEED_10M |
+			ETH_LINK_SPEED_100M_HD | ETH_LINK_SPEED_100M |
+			ETH_LINK_SPEED_1G;
+}
+
+static const uint32_t *
+eth_igb_supported_ptypes_get(struct rte_eth_dev *dev)
+{
+	static const uint32_t ptypes[] = {
+		/* refers to igb_rxd_pkt_info_to_pkt_type() */
+		RTE_PTYPE_L2_ETHER,
+		RTE_PTYPE_L3_IPV4,
+		RTE_PTYPE_L3_IPV4_EXT,
+		RTE_PTYPE_L3_IPV6,
+		RTE_PTYPE_L3_IPV6_EXT,
+		RTE_PTYPE_L4_TCP,
+		RTE_PTYPE_L4_UDP,
+		RTE_PTYPE_L4_SCTP,
+		RTE_PTYPE_TUNNEL_IP,
+		RTE_PTYPE_INNER_L3_IPV6,
+		RTE_PTYPE_INNER_L3_IPV6_EXT,
+		RTE_PTYPE_INNER_L4_TCP,
+		RTE_PTYPE_INNER_L4_UDP,
+		RTE_PTYPE_UNKNOWN
+	};
+
+	if (dev->rx_pkt_burst == eth_igb_recv_pkts ||
+	    dev->rx_pkt_burst == eth_igb_recv_scattered_pkts)
+		return ptypes;
+	return NULL;
 }
 
 static void
@@ -2028,13 +2061,20 @@ eth_igb_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 
 	/* Now we check if a transition has happened */
 	if (link_check) {
-		hw->mac.ops.get_link_up_info(hw, &link.link_speed,
-					  &link.link_duplex);
-		link.link_status = 1;
+		uint16_t duplex, speed;
+		hw->mac.ops.get_link_up_info(hw, &speed, &duplex);
+		link.link_duplex = (duplex == FULL_DUPLEX) ?
+				ETH_LINK_FULL_DUPLEX :
+				ETH_LINK_HALF_DUPLEX;
+		link.link_speed = speed;
+		link.link_status = ETH_LINK_UP;
+		link.link_autoneg = !(dev->data->dev_conf.link_speeds &
+				ETH_LINK_SPEED_FIXED);
 	} else if (!link_check) {
 		link.link_speed = 0;
-		link.link_duplex = 0;
-		link.link_status = 0;
+		link.link_duplex = ETH_LINK_HALF_DUPLEX;
+		link.link_status = ETH_LINK_DOWN;
+		link.link_autoneg = ETH_LINK_SPEED_FIXED;
 	}
 	rte_igb_dev_atomic_write_link_status(dev, &link);
 

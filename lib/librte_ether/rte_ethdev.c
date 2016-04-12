@@ -866,6 +866,39 @@ rte_eth_dev_tx_queue_config(struct rte_eth_dev *dev, uint16_t nb_queues)
 	return 0;
 }
 
+uint32_t
+rte_eth_speed_bitflag(uint32_t speed, int duplex)
+{
+	switch (speed) {
+	case ETH_SPEED_NUM_10M:
+		return duplex ? ETH_LINK_SPEED_10M : ETH_LINK_SPEED_10M_HD;
+	case ETH_SPEED_NUM_100M:
+		return duplex ? ETH_LINK_SPEED_100M : ETH_LINK_SPEED_100M_HD;
+	case ETH_SPEED_NUM_1G:
+		return ETH_LINK_SPEED_1G;
+	case ETH_SPEED_NUM_2_5G:
+		return ETH_LINK_SPEED_2_5G;
+	case ETH_SPEED_NUM_5G:
+		return ETH_LINK_SPEED_5G;
+	case ETH_SPEED_NUM_10G:
+		return ETH_LINK_SPEED_10G;
+	case ETH_SPEED_NUM_20G:
+		return ETH_LINK_SPEED_20G;
+	case ETH_SPEED_NUM_25G:
+		return ETH_LINK_SPEED_25G;
+	case ETH_SPEED_NUM_40G:
+		return ETH_LINK_SPEED_40G;
+	case ETH_SPEED_NUM_50G:
+		return ETH_LINK_SPEED_50G;
+	case ETH_SPEED_NUM_56G:
+		return ETH_LINK_SPEED_56G;
+	case ETH_SPEED_NUM_100G:
+		return ETH_LINK_SPEED_100G;
+	default:
+		return 0;
+	}
+}
+
 int
 rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		      const struct rte_eth_conf *dev_conf)
@@ -901,6 +934,9 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 		return -EBUSY;
 	}
 
+	/* Copy the dev_conf parameter into the dev structure */
+	memcpy(&dev->data->dev_conf, dev_conf, sizeof(dev->data->dev_conf));
+
 	/*
 	 * Check that the numbers of RX and TX queues are not greater
 	 * than the maximum number of RX and TX queues supported by the
@@ -924,9 +960,6 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 				port_id, nb_tx_q, dev_info.max_tx_queues);
 		return -EINVAL;
 	}
-
-	/* Copy the dev_conf parameter into the dev structure */
-	memcpy(&dev->data->dev_conf, dev_conf, sizeof(dev->data->dev_conf));
 
 	/*
 	 * If link state interrupt is enabled, check that the
@@ -1309,15 +1342,18 @@ rte_eth_tx_buffer_set_err_callback(struct rte_eth_dev_tx_buffer *buffer,
 int
 rte_eth_tx_buffer_init(struct rte_eth_dev_tx_buffer *buffer, uint16_t size)
 {
+	int ret = 0;
+
 	if (buffer == NULL)
 		return -EINVAL;
 
 	buffer->size = size;
-	if (buffer->error_callback == NULL)
-		rte_eth_tx_buffer_set_err_callback(buffer,
-				rte_eth_tx_buffer_drop_callback, NULL);
+	if (buffer->error_callback == NULL) {
+		ret = rte_eth_tx_buffer_set_err_callback(
+			buffer, rte_eth_tx_buffer_drop_callback, NULL);
+	}
 
-	return 0;
+	return ret;
 }
 
 void
@@ -1495,14 +1531,15 @@ rte_eth_xstats_get(uint8_t port_id, struct rte_eth_xstats *xstats,
 		/* Retrieve the xstats from the driver at the end of the
 		 * xstats struct.
 		 */
-		xcount = (*dev->dev_ops->xstats_get)(dev, &xstats[count],
-			 (n > count) ? n - count : 0);
+		xcount = (*dev->dev_ops->xstats_get)(dev,
+				     xstats ? xstats + count : NULL,
+				     (n > count) ? n - count : 0);
 
 		if (xcount < 0)
 			return xcount;
 	}
 
-	if (n < count + xcount)
+	if (n < count + xcount || xstats == NULL)
 		return count + xcount;
 
 	/* now fill the xstats structure */
@@ -1624,6 +1661,32 @@ rte_eth_dev_info_get(uint8_t port_id, struct rte_eth_dev_info *dev_info)
 	(*dev->dev_ops->dev_infos_get)(dev, dev_info);
 	dev_info->pci_dev = dev->pci_dev;
 	dev_info->driver_name = dev->data->drv_name;
+}
+
+int
+rte_eth_dev_get_supported_ptypes(uint8_t port_id, uint32_t ptype_mask,
+				 uint32_t *ptypes, int num)
+{
+	int i, j;
+	struct rte_eth_dev *dev;
+	const uint32_t *all_ptypes;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	dev = &rte_eth_devices[port_id];
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->dev_supported_ptypes_get, 0);
+	all_ptypes = (*dev->dev_ops->dev_supported_ptypes_get)(dev);
+
+	if (!all_ptypes)
+		return 0;
+
+	for (i = 0, j = 0; all_ptypes[i] != RTE_PTYPE_UNKNOWN; ++i)
+		if (all_ptypes[i] & ptype_mask) {
+			if (j < num)
+				ptypes[j] = all_ptypes[i];
+			j++;
+		}
+
+	return j;
 }
 
 void

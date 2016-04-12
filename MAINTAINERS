@@ -25,6 +25,7 @@ M: Thomas Monjalon <thomas.monjalon@6wind.com>
 T: git://dpdk.org/dpdk
 F: MAINTAINERS
 F: scripts/check-maintainers.sh
+F: scripts/check-git-log.sh
 F: scripts/checkpatches.sh
 F: scripts/load-devel-config.sh
 F: scripts/test-build.sh
@@ -231,7 +232,7 @@ M: Thomas Monjalon <thomas.monjalon@6wind.com>
 F: lib/librte_ether/
 F: scripts/test-null.sh
 
-Crypto API - EXPERIMENTAL
+Crypto API
 M: Declan Doherty <declan.doherty@intel.com>
 F: lib/librte_cryptodev/
 F: app/test/test_cryptodev*
@@ -261,6 +262,14 @@ Linux AF_PACKET
 M: John W. Linville <linville@tuxdriver.com>
 F: drivers/net/af_packet/
 
+Amazon ENA
+M: Jan Medala <jan@semihalf.com>
+M: Jakub Palider <jpa@semihalf.com>
+M: Netanel Belgazal <netanel@amazon.com>
+M: Evgeny Schemeilin <evgenys@amazon.com>
+F: drivers/net/ena/
+F: doc/guides/nics/ena.rst
+
 Chelsio cxgbe
 M: Rahul Lakkireddy <rahul.lakkireddy@chelsio.com>
 F: drivers/net/cxgbe/
@@ -268,8 +277,9 @@ F: doc/guides/nics/cxgbe.rst
 
 Cisco enic
 M: John Daley <johndale@cisco.com>
-M: Sujith Sankar <ssujith@cisco.com>
+M: Nelson Escobar <neescoba@cisco.com>
 F: drivers/net/enic/
+F: doc/guides/nics/enic.rst
 
 Combo szedata2
 M: Matej Vido <matejvido@gmail.com>
@@ -291,7 +301,9 @@ F: doc/guides/nics/intel_vf.rst
 
 Intel i40e
 M: Helin Zhang <helin.zhang@intel.com>
+M: Jingjing Wu <jingjing.wu@intel.com>
 F: drivers/net/i40e/
+F: doc/guides/nics/i40e.rst
 F: doc/guides/nics/intel_vf.rst
 
 Intel fm10k
@@ -335,9 +347,14 @@ M: Yong Wang <yongwang@vmware.com>
 F: drivers/net/vmxnet3/
 F: doc/guides/nics/vmxnet3.rst
 
+Vhost PMD
+M: Tetsuya Mukawa <mukawa@igel.co.jp>
+M: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+F: drivers/net/vhost/
+
 PCAP PMD
 M: Nicolás Pernas Maradei <nicolas.pernas.maradei@emutex.com>
-M: John McNamara <john.mcnamara@intel.com>
+M: Ferruh Yigit <ferruh.yigit@intel.com>
 F: drivers/net/pcap/
 F: doc/guides/nics/pcap_ring.rst
 
@@ -582,6 +599,10 @@ M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
 F: examples/l2fwd/
 F: doc/guides/sample_app_ug/l2_forward_real_virtual.rst
 
+M: Tomasz Kantecki <tomasz.kantecki@intel.com>
+F: doc/guides/sample_app_ug/l2_forward_cat.rst
+F: examples/l2fwd-cat/
+
 F: examples/l3fwd/
 F: doc/guides/sample_app_ug/l3_forward.rst
 
@@ -602,6 +623,10 @@ M: Ian Betts <ian.betts@intel.com>
 F: examples/performance-thread/
 F: doc/guides/sample_app_ug/performance_thread.rst
 
+M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
+M: Daniel Mrzyglod <danielx.t.mrzyglod@intel.com>
+F: examples/ptpclient/
+
 F: examples/quota_watermark/
 F: doc/guides/sample_app_ug/quota_watermark.rst
 
@@ -621,7 +646,3 @@ F: examples/tep_termination/
 F: examples/vmdq/
 F: examples/vmdq_dcb/
 F: doc/guides/sample_app_ug/vmdq_dcb_forwarding.rst
-
-M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
-M: Daniel Mrzyglod <danielx.t.mrzyglod@intel.com>
-F: examples/ptpclient/

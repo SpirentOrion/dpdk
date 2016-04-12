@@ -312,7 +312,7 @@ priv_make_ind_table_init(struct priv *priv,
 	/* Mandatory to receive frames not handled by normal hash RX queues. */
 	unsigned int hash_types_sup = 1 << HASH_RXQ_ETH;
 
-	rss_hf = priv->dev->data->dev_conf.rx_adv_conf.rss_conf.rss_hf;
+	rss_hf = priv->rss_hf;
 	/* Process other protocols only if more than one queue. */
 	if (priv->rxqs_n > 1)
 		for (i = 0; (i != hash_rxq_init_n); ++i)
@@ -1258,6 +1258,45 @@ rxq_setup(struct rte_eth_dev *dev, struct rxq *rxq, uint16_t desc,
 				  0),
 #endif /* HAVE_EXP_DEVICE_ATTR_VLAN_OFFLOADS */
 	};
+
+#ifdef HAVE_VERBS_FCS
+	/* By default, FCS (CRC) is stripped by hardware. */
+	if (dev->data->dev_conf.rxmode.hw_strip_crc) {
+		tmpl.crc_present = 0;
+	} else if (priv->hw_fcs_strip) {
+		/* Ask HW/Verbs to leave CRC in place when supported. */
+		attr.wq.flags |= IBV_EXP_CREATE_WQ_FLAG_SCATTER_FCS;
+		attr.wq.comp_mask |= IBV_EXP_CREATE_WQ_FLAGS;
+		tmpl.crc_present = 1;
+	} else {
+		WARN("%p: CRC stripping has been disabled but will still"
+		     " be performed by hardware, make sure MLNX_OFED and"
+		     " firmware are up to date",
+		     (void *)dev);
+		tmpl.crc_present = 0;
+	}
+	DEBUG("%p: CRC stripping is %s, %u bytes will be subtracted from"
+	      " incoming frames to hide it",
+	      (void *)dev,
+	      tmpl.crc_present ? "disabled" : "enabled",
+	      tmpl.crc_present << 2);
+#endif /* HAVE_VERBS_FCS */
+
+#ifdef HAVE_VERBS_RX_END_PADDING
+	if (!mlx5_getenv_int("MLX5_PMD_ENABLE_PADDING"))
+		; /* Nothing else to do. */
+	else if (priv->hw_padding) {
+		INFO("%p: enabling packet padding on queue %p",
+		     (void *)dev, (void *)rxq);
+		attr.wq.flags |= IBV_EXP_CREATE_WQ_FLAG_RX_END_PADDING;
+		attr.wq.comp_mask |= IBV_EXP_CREATE_WQ_FLAGS;
+	} else
+		WARN("%p: packet padding has been requested but is not"
+		     " supported, make sure MLNX_OFED and firmware are"
+		     " up to date",
+		     (void *)dev);
+#endif /* HAVE_VERBS_RX_END_PADDING */
+
 	tmpl.wq = ibv_exp_create_wq(priv->ctx, &attr.wq);
 	if (tmpl.wq == NULL) {
 		ret = (errno ? errno : EINVAL);
@@ -1395,6 +1434,9 @@ mlx5_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 	struct rxq *rxq = (*priv->rxqs)[idx];
 	int ret;
 
+	if (mlx5_is_secondary())
+		return -E_RTE_SECONDARY;
+
 	priv_lock(priv);
 	DEBUG("%p: configuring queue %u for %u descriptors",
 	      (void *)dev, idx, desc);
@@ -1453,6 +1495,9 @@ mlx5_rx_queue_release(void *dpdk_rxq)
 	struct priv *priv;
 	unsigned int i;
 
+	if (mlx5_is_secondary())
+		return;
+
 	if (rxq == NULL)
 		return;
 	priv = rxq->priv;
@@ -1467,4 +1512,44 @@ mlx5_rx_queue_release(void *dpdk_rxq)
 	rxq_cleanup(rxq);
 	rte_free(rxq);
 	priv_unlock(priv);
+}
+
+/**
+ * DPDK callback for RX in secondary processes.
+ *
+ * This function configures all queues from primary process information
+ * if necessary before reverting to the normal RX burst callback.
+ *
+ * @param dpdk_rxq
+ *   Generic pointer to RX queue structure.
+ * @param[out] pkts
+ *   Array to store received packets.
+ * @param pkts_n
+ *   Maximum number of packets in array.
+ *
+ * @return
+ *   Number of packets successfully received (<= pkts_n).
+ */
+uint16_t
+mlx5_rx_burst_secondary_setup(void *dpdk_rxq, struct rte_mbuf **pkts,
+			      uint16_t pkts_n)
+{
+	struct rxq *rxq = dpdk_rxq;
+	struct priv *priv = mlx5_secondary_data_setup(rxq->priv);
+	struct priv *primary_priv;
+	unsigned int index;
+
+	if (priv == NULL)
+		return 0;
+	primary_priv =
+		mlx5_secondary_data[priv->dev->data->port_id].primary_priv;
+	/* Look for queue index in both private structures. */
+	for (index = 0; index != priv->rxqs_n; ++index)
+		if (((*primary_priv->rxqs)[index] == rxq) ||
+		    ((*priv->rxqs)[index] == rxq))
+			break;
+	if (index == priv->rxqs_n)
+		return 0;
+	rxq = (*priv->rxqs)[index];
+	return priv->dev->rx_pkt_burst(rxq, pkts, pkts_n);
 }

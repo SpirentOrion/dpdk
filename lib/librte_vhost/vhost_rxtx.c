@@ -94,8 +94,6 @@ is_valid_virt_queue_idx(uint32_t idx, int is_tx, uint32_t qp_nb)
 static void
 virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 {
-	memset(net_hdr, 0, sizeof(struct virtio_net_hdr));
-
 	if (m_buf->ol_flags & PKT_TX_L4_MASK) {
 		net_hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
 		net_hdr->csum_start = m_buf->l2_len + m_buf->l3_len;
@@ -125,8 +123,6 @@ virtio_enqueue_offload(struct rte_mbuf *m_buf, struct virtio_net_hdr *net_hdr)
 		net_hdr->hdr_len = m_buf->l2_len + m_buf->l3_len
 					+ m_buf->l4_len;
 	}
-
-	return;
 }
 
 static inline void
@@ -317,7 +313,7 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 			rte_prefetch0(&vq->desc[desc_indexes[i+1]]);
 	}
 
-	rte_compiler_barrier();
+	rte_smp_wmb();
 
 	/* Wait until it's our turn to add our buffer to the used ring. */
 	while (unlikely(vq->last_used_idx != res_start_idx))
@@ -567,7 +563,7 @@ virtio_dev_merge_rx(struct virtio_net *dev, uint16_t queue_id,
 
 		nr_used = copy_mbuf_to_desc_mergeable(dev, vq, start, end,
 						      pkts[pkt_idx]);
-		rte_compiler_barrier();
+		rte_smp_wmb();
 
 		/*
 		 * Wait until it's our turn to add our buffer
@@ -925,7 +921,8 @@ rte_vhost_dequeue_burst(struct virtio_net *dev, uint16_t queue_id,
 				sizeof(vq->used->ring[used_idx]));
 	}
 
-	rte_compiler_barrier();
+	rte_smp_wmb();
+	rte_smp_rmb();
 	vq->used->idx += i;
 	vhost_log_used_vring(dev, vq, offsetof(struct vring_used, idx),
 			sizeof(vq->used->idx));

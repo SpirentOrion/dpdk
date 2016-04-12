@@ -698,7 +698,7 @@ txq_cleanup(struct txq *txq);
 
 static int
 rxq_setup(struct rte_eth_dev *dev, struct rxq *rxq, uint16_t desc,
-	  unsigned int socket, const struct rte_eth_rxconf *conf,
+	  unsigned int socket, int inactive, const struct rte_eth_rxconf *conf,
 	  struct rte_mempool *mp);
 
 static void
@@ -734,12 +734,15 @@ dev_configure(struct rte_eth_dev *dev)
 	}
 	if (rxqs_n == priv->rxqs_n)
 		return 0;
-	if ((rxqs_n & (rxqs_n - 1)) != 0) {
-		ERROR("%p: invalid number of RX queues (%u),"
-		      " must be a power of 2",
-		      (void *)dev, rxqs_n);
-		return EINVAL;
+	if (!rte_is_power_of_2(rxqs_n)) {
+		unsigned n_active;
+
+		n_active = rte_align32pow2(rxqs_n + 1) >> 1;
+		WARN("%p: number of RX queues must be a power"
+			" of 2: %u queues among %u will be active",
+			(void *)dev, n_active, rxqs_n);
 	}
+
 	INFO("%p: RX queues number update: %u -> %u",
 	     (void *)dev, priv->rxqs_n, rxqs_n);
 	/* If RSS is enabled, disable it first. */
@@ -775,7 +778,7 @@ dev_configure(struct rte_eth_dev *dev)
 	priv->rss = 1;
 	tmp = priv->rxqs_n;
 	priv->rxqs_n = rxqs_n;
-	ret = rxq_setup(dev, &priv->rxq_parent, 0, 0, NULL, NULL);
+	ret = rxq_setup(dev, &priv->rxq_parent, 0, 0, 0, NULL, NULL);
 	if (!ret)
 		return 0;
 	/* Failure, rollback. */
@@ -1044,14 +1047,20 @@ error:
 static void
 txq_free_elts(struct txq *txq)
 {
-	unsigned int i;
 	unsigned int elts_n = txq->elts_n;
+	unsigned int elts_head = txq->elts_head;
+	unsigned int elts_tail = txq->elts_tail;
 	struct txq_elt (*elts)[elts_n] = txq->elts;
 	linear_t (*elts_linear)[elts_n] = txq->elts_linear;
 	struct ibv_mr *mr_linear = txq->mr_linear;
 
 	DEBUG("%p: freeing WRs", (void *)txq);
 	txq->elts_n = 0;
+	txq->elts_head = 0;
+	txq->elts_tail = 0;
+	txq->elts_comp = 0;
+	txq->elts_comp_cd = 0;
+	txq->elts_comp_cd_init = 0;
 	txq->elts = NULL;
 	txq->elts_linear = NULL;
 	txq->mr_linear = NULL;
@@ -1061,12 +1070,17 @@ txq_free_elts(struct txq *txq)
 	rte_free(elts_linear);
 	if (elts == NULL)
 		return;
-	for (i = 0; (i != elemof(*elts)); ++i) {
-		struct txq_elt *elt = &(*elts)[i];
+	while (elts_tail != elts_head) {
+		struct txq_elt *elt = &(*elts)[elts_tail];
 
-		if (elt->buf == NULL)
-			continue;
+		assert(elt->buf != NULL);
 		rte_pktmbuf_free(elt->buf);
+#ifndef NDEBUG
+		/* Poisoning. */
+		memset(elt, 0x77, sizeof(*elt));
+#endif
+		if (++elts_tail == elts_n)
+			elts_tail = 0;
 	}
 	rte_free(elts);
 }
@@ -1585,6 +1599,10 @@ mlx4_tx_burst(void *dpdk_txq, struct rte_mbuf **pkts, uint16_t pkts_n)
 		if (likely(elt->buf != NULL)) {
 			struct rte_mbuf *tmp = elt->buf;
 
+#ifndef NDEBUG
+			/* Poisoning. */
+			memset(elt, 0x66, sizeof(*elt));
+#endif
 			/* Faster than rte_pktmbuf_free(). */
 			do {
 				struct rte_mbuf *next = NEXT(tmp);
@@ -2876,6 +2894,8 @@ rxq_cleanup(struct rxq *rxq)
  * @param flags
  *   RX completion flags returned by poll_length_flags().
  *
+ * @note: fix mlx4_dev_supported_ptypes_get() if any change here.
+ *
  * @return
  *   Packet type for struct rte_mbuf.
  */
@@ -3466,7 +3486,8 @@ rxq_setup_qp_rss(struct priv *priv, struct ibv_cq *cq, uint16_t desc,
 		attr.qpg.qpg_type = IBV_EXP_QPG_PARENT;
 		/* TSS isn't necessary. */
 		attr.qpg.parent_attrib.tss_child_count = 0;
-		attr.qpg.parent_attrib.rss_child_count = priv->rxqs_n;
+		attr.qpg.parent_attrib.rss_child_count =
+			rte_align32pow2(priv->rxqs_n + 1) >> 1;
 		DEBUG("initializing parent RSS queue");
 	} else {
 		attr.qpg.qpg_type = IBV_EXP_QPG_CHILD_RX;
@@ -3689,6 +3710,9 @@ skip_rtr:
  *   Number of descriptors to configure in queue.
  * @param socket
  *   NUMA socket on which memory must be allocated.
+ * @param inactive
+ *   If true, the queue is disabled because its index is higher or
+ *   equal to the real number of queues, which must be a power of 2.
  * @param[in] conf
  *   Thresholds parameters.
  * @param mp
@@ -3699,7 +3723,7 @@ skip_rtr:
  */
 static int
 rxq_setup(struct rte_eth_dev *dev, struct rxq *rxq, uint16_t desc,
-	  unsigned int socket, const struct rte_eth_rxconf *conf,
+	  unsigned int socket, int inactive, const struct rte_eth_rxconf *conf,
 	  struct rte_mempool *mp)
 {
 	struct priv *priv = dev->data->dev_private;
@@ -3800,7 +3824,7 @@ skip_mr:
 	DEBUG("priv->device_attr.max_sge is %d",
 	      priv->device_attr.max_sge);
 #ifdef RSS_SUPPORT
-	if (priv->rss)
+	if (priv->rss && !inactive)
 		tmpl.qp = rxq_setup_qp_rss(priv, tmpl.cq, desc, parent,
 					   tmpl.rd);
 	else
@@ -3936,6 +3960,7 @@ mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 {
 	struct priv *priv = dev->data->dev_private;
 	struct rxq *rxq = (*priv->rxqs)[idx];
+	int inactive = 0;
 	int ret;
 
 	if (mlx4_is_secondary())
@@ -3967,7 +3992,9 @@ mlx4_rx_queue_setup(struct rte_eth_dev *dev, uint16_t idx, uint16_t desc,
 			return -ENOMEM;
 		}
 	}
-	ret = rxq_setup(dev, rxq, desc, socket, conf, mp);
+	if (idx >= rte_align32pow2(priv->rxqs_n + 1) >> 1)
+		inactive = 1;
+	ret = rxq_setup(dev, rxq, desc, socket, inactive, conf, mp);
 	if (ret)
 		rte_free(rxq);
 	else {
@@ -4301,7 +4328,31 @@ mlx4_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 		 0);
 	if (priv_get_ifname(priv, &ifname) == 0)
 		info->if_index = if_nametoindex(ifname);
+	info->speed_capa =
+			ETH_LINK_SPEED_1G |
+			ETH_LINK_SPEED_10G |
+			ETH_LINK_SPEED_20G |
+			ETH_LINK_SPEED_40G |
+			ETH_LINK_SPEED_56G;
 	priv_unlock(priv);
+}
+
+static const uint32_t *
+mlx4_dev_supported_ptypes_get(struct rte_eth_dev *dev)
+{
+	static const uint32_t ptypes[] = {
+		/* refers to rxq_cq_to_pkt_type() */
+		RTE_PTYPE_L3_IPV4,
+		RTE_PTYPE_L3_IPV6,
+		RTE_PTYPE_INNER_L3_IPV4,
+		RTE_PTYPE_INNER_L3_IPV6,
+		RTE_PTYPE_UNKNOWN
+	};
+
+	if (dev->rx_pkt_burst == mlx4_rx_burst ||
+	    dev->rx_pkt_burst == mlx4_rx_burst_sp)
+		return ptypes;
+	return NULL;
 }
 
 /**
@@ -4685,6 +4736,8 @@ mlx4_link_update_unlocked(struct rte_eth_dev *dev, int wait_to_complete)
 		dev_link.link_speed = link_speed;
 	dev_link.link_duplex = ((edata.duplex == DUPLEX_HALF) ?
 				ETH_LINK_HALF_DUPLEX : ETH_LINK_FULL_DUPLEX);
+	dev_link.link_autoneg = !(dev->data->dev_conf.link_speeds &
+			ETH_LINK_SPEED_FIXED);
 	if (memcmp(&dev_link, &dev->data->dev_link, sizeof(dev_link))) {
 		/* Link status changed. */
 		dev->data->dev_link = dev_link;
@@ -5041,6 +5094,7 @@ static const struct eth_dev_ops mlx4_dev_ops = {
 	.stats_reset = mlx4_stats_reset,
 	.queue_stats_mapping_set = NULL,
 	.dev_infos_get = mlx4_dev_infos_get,
+	.dev_supported_ptypes_get = mlx4_dev_supported_ptypes_get,
 	.vlan_filter_set = mlx4_vlan_filter_set,
 	.vlan_tpid_set = NULL,
 	.vlan_strip_queue_set = NULL,
@@ -5463,6 +5517,13 @@ mlx4_pci_devinit(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 			ERROR("port query failed: %s", strerror(err));
 			goto port_error;
 		}
+
+		if (port_attr.link_layer != IBV_LINK_LAYER_ETHERNET) {
+			ERROR("port %d is not configured in Ethernet mode",
+			      port);
+			goto port_error;
+		}
+
 		if (port_attr.state != IBV_PORT_ACTIVE)
 			DEBUG("port %d is not active: \"%s\" (%d)",
 			      port, ibv_port_state_str(port_attr.state),

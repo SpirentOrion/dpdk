@@ -198,10 +198,12 @@
 #define I40E_REG_INSET_L2_DMAC                   0xE000000000000000ULL
 /* Source MAC address */
 #define I40E_REG_INSET_L2_SMAC                   0x1C00000000000000ULL
-/* VLAN tag in the outer L2 header */
-#define I40E_REG_INSET_L2_OUTER_VLAN             0x0080000000000000ULL
-/* VLAN tag in the inner L2 header */
-#define I40E_REG_INSET_L2_INNER_VLAN             0x0100000000000000ULL
+/* Outer (S-Tag) VLAN tag in the outer L2 header */
+#define I40E_REG_INSET_L2_OUTER_VLAN             0x0200000000000000ULL
+/* Inner (C-Tag) or single VLAN tag in the outer L2 header */
+#define I40E_REG_INSET_L2_INNER_VLAN             0x0080000000000000ULL
+/* Single VLAN tag in the inner L2 header */
+#define I40E_REG_INSET_TUNNEL_VLAN               0x0100000000000000ULL
 /* Source IPv4 address */
 #define I40E_REG_INSET_L3_SRC_IP4                0x0001800000000000ULL
 /* Destination IPv4 address */
@@ -210,6 +212,8 @@
 #define I40E_REG_INSET_L3_IP4_TOS                0x0040000000000000ULL
 /* IPv4 Protocol */
 #define I40E_REG_INSET_L3_IP4_PROTO              0x0004000000000000ULL
+/* IPv4 Time to Live */
+#define I40E_REG_INSET_L3_IP4_TTL                0x0004000000000000ULL
 /* Source IPv6 address */
 #define I40E_REG_INSET_L3_SRC_IP6                0x0007F80000000000ULL
 /* Destination IPv6 address */
@@ -218,6 +222,8 @@
 #define I40E_REG_INSET_L3_IP6_TC                 0x0040000000000000ULL
 /* IPv6 Next Header */
 #define I40E_REG_INSET_L3_IP6_NEXT_HDR           0x0008000000000000ULL
+/* IPv6 Hop Limit */
+#define I40E_REG_INSET_L3_IP6_HOP_LIMIT          0x0008000000000000ULL
 /* Source L4 port */
 #define I40E_REG_INSET_L4_SRC_PORT               0x0000000400000000ULL
 /* Destination L4 port */
@@ -254,16 +260,19 @@
 #define I40E_REG_INSET_FLEX_PAYLOAD_WORD7        0x0000000000000080ULL
 /* 8th word of flex payload */
 #define I40E_REG_INSET_FLEX_PAYLOAD_WORD8        0x0000000000000040ULL
-
+/* all 8 words flex payload */
+#define I40E_REG_INSET_FLEX_PAYLOAD_WORDS        0x0000000000003FC0ULL
 #define I40E_REG_INSET_MASK_DEFAULT              0x0000000000000000ULL
 
 #define I40E_TRANSLATE_INSET 0
 #define I40E_TRANSLATE_REG   1
 
-#define I40E_INSET_IPV4_TOS_MASK      0x0009FF00UL
-#define I40E_INSET_IPV4_PROTO_MASK    0x000DFF00UL
-#define I40E_INSET_IPV6_TC_MASK       0x0009F00FUL
-#define I40E_INSET_IPV6_NEXT_HDR_MASK 0x000C00FFUL
+#define I40E_INSET_IPV4_TOS_MASK        0x0009FF00UL
+#define I40E_INSET_IPv4_TTL_MASK        0x000D00FFUL
+#define I40E_INSET_IPV4_PROTO_MASK      0x000DFF00UL
+#define I40E_INSET_IPV6_TC_MASK         0x0009F00FUL
+#define I40E_INSET_IPV6_HOP_LIMIT_MASK  0x000CFF00UL
+#define I40E_INSET_IPV6_NEXT_HDR_MASK   0x000C00FFUL
 
 #define I40E_GL_SWT_L2TAGCTRL(_i)             (0x001C0A70 + ((_i) * 4))
 #define I40E_GL_SWT_L2TAGCTRL_ETHERTYPE_SHIFT 16
@@ -383,6 +392,7 @@ static int i40e_dev_udp_tunnel_port_add(struct rte_eth_dev *dev,
 					struct rte_eth_udp_tunnel *udp_tunnel);
 static int i40e_dev_udp_tunnel_port_del(struct rte_eth_dev *dev,
 					struct rte_eth_udp_tunnel *udp_tunnel);
+static void i40e_filter_input_set_init(struct i40e_pf *pf);
 static int i40e_ethertype_filter_set(struct i40e_pf *pf,
 			struct rte_eth_ethertype_filter *filter,
 			bool add);
@@ -461,6 +471,7 @@ static const struct eth_dev_ops i40e_eth_dev_ops = {
 	.xstats_reset                 = i40e_dev_stats_reset,
 	.queue_stats_mapping_set      = i40e_dev_queue_stats_mapping_set,
 	.dev_infos_get                = i40e_dev_info_get,
+	.dev_supported_ptypes_get     = i40e_dev_supported_ptypes_get,
 	.vlan_filter_set              = i40e_vlan_filter_set,
 	.vlan_tpid_set                = i40e_vlan_tpid_set,
 	.vlan_offload_set             = i40e_vlan_offload_set,
@@ -814,6 +825,9 @@ eth_i40e_dev_init(struct rte_eth_dev *dev)
 	 * It should be removed once issues are fixed in NVM.
 	 */
 	i40e_flex_payload_reg_init(hw);
+
+	/* Initialize the input set for filters (hash and fd) to default value */
+	i40e_filter_input_set_init(pf);
 
 	/* Initialize the parameters for adminq */
 	i40e_init_adminq_parameter(hw);
@@ -1367,27 +1381,20 @@ i40e_vsi_disable_queues_intr(struct i40e_vsi *vsi)
 }
 
 static inline uint8_t
-i40e_parse_link_speed(uint16_t eth_link_speed)
+i40e_parse_link_speeds(uint16_t link_speeds)
 {
 	uint8_t link_speed = I40E_LINK_SPEED_UNKNOWN;
 
-	switch (eth_link_speed) {
-	case ETH_LINK_SPEED_40G:
-		link_speed = I40E_LINK_SPEED_40GB;
-		break;
-	case ETH_LINK_SPEED_20G:
-		link_speed = I40E_LINK_SPEED_20GB;
-		break;
-	case ETH_LINK_SPEED_10G:
-		link_speed = I40E_LINK_SPEED_10GB;
-		break;
-	case ETH_LINK_SPEED_1000:
-		link_speed = I40E_LINK_SPEED_1GB;
-		break;
-	case ETH_LINK_SPEED_100:
-		link_speed = I40E_LINK_SPEED_100MB;
-		break;
-	}
+	if (link_speeds & ETH_LINK_SPEED_40G)
+		link_speed |= I40E_LINK_SPEED_40GB;
+	if (link_speeds & ETH_LINK_SPEED_20G)
+		link_speed |= I40E_LINK_SPEED_20GB;
+	if (link_speeds & ETH_LINK_SPEED_10G)
+		link_speed |= I40E_LINK_SPEED_10GB;
+	if (link_speeds & ETH_LINK_SPEED_1G)
+		link_speed |= I40E_LINK_SPEED_1GB;
+	if (link_speeds & ETH_LINK_SPEED_100M)
+		link_speed |= I40E_LINK_SPEED_100MB;
 
 	return link_speed;
 }
@@ -1413,9 +1420,9 @@ i40e_apply_link_speed(struct rte_eth_dev *dev)
 	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct rte_eth_conf *conf = &dev->data->dev_conf;
 
-	speed = i40e_parse_link_speed(conf->link_speed);
+	speed = i40e_parse_link_speeds(conf->link_speeds);
 	abilities |= I40E_AQ_PHY_ENABLE_ATOMIC_LINK;
-	if (conf->link_speed == ETH_LINK_SPEED_AUTONEG)
+	if (!(conf->link_speeds & ETH_LINK_SPEED_FIXED))
 		abilities |= I40E_AQ_PHY_AN_ENABLED;
 	else
 		abilities |= I40E_AQ_PHY_LINK_ENABLED;
@@ -1435,10 +1442,8 @@ i40e_dev_start(struct rte_eth_dev *dev)
 
 	hw->adapter_stopped = 0;
 
-	if ((dev->data->dev_conf.link_duplex != ETH_LINK_AUTONEG_DUPLEX) &&
-		(dev->data->dev_conf.link_duplex != ETH_LINK_FULL_DUPLEX)) {
-		PMD_INIT_LOG(ERR, "Invalid link_duplex (%hu) for port %hhu",
-			     dev->data->dev_conf.link_duplex,
+	if (dev->data->dev_conf.link_speeds & ETH_LINK_SPEED_FIXED) {
+		PMD_INIT_LOG(ERR, "Invalid link_speeds for port %hhu; autonegotiation disabled",
 			     dev->data->port_id);
 		return -EINVAL;
 	}
@@ -1511,6 +1516,12 @@ i40e_dev_start(struct rte_eth_dev *dev)
 	}
 
 	/* Apply link configure */
+	if (dev->data->dev_conf.link_speeds & ~(ETH_LINK_SPEED_100M |
+				ETH_LINK_SPEED_1G | ETH_LINK_SPEED_10G |
+				ETH_LINK_SPEED_20G | ETH_LINK_SPEED_40G)) {
+		PMD_DRV_LOG(ERR, "Invalid link setting");
+		goto err_up;
+	}
 	ret = i40e_apply_link_speed(dev);
 	if (I40E_SUCCESS != ret) {
 		PMD_DRV_LOG(ERR, "Fail to apply link setting");
@@ -1754,7 +1765,7 @@ i40e_dev_link_update(struct rte_eth_dev *dev,
 		/* Get link status information from hardware */
 		status = i40e_aq_get_link_info(hw, false, &link_status, NULL);
 		if (status != I40E_SUCCESS) {
-			link.link_speed = ETH_LINK_SPEED_100;
+			link.link_speed = ETH_SPEED_NUM_100M;
 			link.link_duplex = ETH_LINK_FULL_DUPLEX;
 			PMD_DRV_LOG(ERR, "Failed to get link info");
 			goto out;
@@ -1776,24 +1787,27 @@ i40e_dev_link_update(struct rte_eth_dev *dev,
 	/* Parse the link status */
 	switch (link_status.link_speed) {
 	case I40E_LINK_SPEED_100MB:
-		link.link_speed = ETH_LINK_SPEED_100;
+		link.link_speed = ETH_SPEED_NUM_100M;
 		break;
 	case I40E_LINK_SPEED_1GB:
-		link.link_speed = ETH_LINK_SPEED_1000;
+		link.link_speed = ETH_SPEED_NUM_1G;
 		break;
 	case I40E_LINK_SPEED_10GB:
-		link.link_speed = ETH_LINK_SPEED_10G;
+		link.link_speed = ETH_SPEED_NUM_10G;
 		break;
 	case I40E_LINK_SPEED_20GB:
-		link.link_speed = ETH_LINK_SPEED_20G;
+		link.link_speed = ETH_SPEED_NUM_20G;
 		break;
 	case I40E_LINK_SPEED_40GB:
-		link.link_speed = ETH_LINK_SPEED_40G;
+		link.link_speed = ETH_SPEED_NUM_40G;
 		break;
 	default:
-		link.link_speed = ETH_LINK_SPEED_100;
+		link.link_speed = ETH_SPEED_NUM_100M;
 		break;
 	}
+
+	link.link_autoneg = !(dev->data->dev_conf.link_speeds &
+			ETH_LINK_SPEED_FIXED);
 
 out:
 	rte_i40e_dev_atomic_write_link_status(dev, &link);
@@ -2092,8 +2106,7 @@ i40e_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 			pf->main_vsi->eth_stats.rx_discards;
 	stats->ierrors  = ns->crc_errors +
 			ns->rx_length_errors + ns->rx_undersize +
-			ns->rx_oversize + ns->rx_fragments + ns->rx_jabber +
-			stats->imissed;
+			ns->rx_oversize + ns->rx_fragments + ns->rx_jabber;
 
 	PMD_DRV_LOG(DEBUG, "***************** PF stats start *******************");
 	PMD_DRV_LOG(DEBUG, "rx_bytes:            %"PRIu64"", ns->eth.rx_bytes);
@@ -2274,6 +2287,7 @@ static void
 i40e_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct i40e_pf *pf = I40E_DEV_PRIVATE_TO_PF(dev->data->dev_private);
+	struct i40e_hw *hw = I40E_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	struct i40e_vsi *vsi = pf->main_vsi;
 
 	dev_info->max_rx_queues = vsi->nb_qps;
@@ -2345,6 +2359,13 @@ i40e_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		dev_info->max_rx_queues += dev_info->vmdq_queue_num;
 		dev_info->max_tx_queues += dev_info->vmdq_queue_num;
 	}
+
+	if (i40e_is_40G_device(hw->device_id))
+		/* For XL710 */
+		dev_info->speed_capa = ETH_LINK_SPEED_1G | ETH_LINK_SPEED_10G;
+	else
+		/* For X710 */
+		dev_info->speed_capa = ETH_LINK_SPEED_10G | ETH_LINK_SPEED_40G;
 }
 
 static int
@@ -3336,17 +3357,21 @@ i40e_res_pool_init (struct i40e_res_pool_info *pool, uint32_t base,
 static void
 i40e_res_pool_destroy(struct i40e_res_pool_info *pool)
 {
-	struct pool_entry *entry;
+	struct pool_entry *entry, *next_entry;
 
 	if (pool == NULL)
 		return;
 
-	LIST_FOREACH(entry, &pool->alloc_list, next) {
+	for (entry = LIST_FIRST(&pool->alloc_list);
+			entry && (next_entry = LIST_NEXT(entry, next), 1);
+			entry = next_entry) {
 		LIST_REMOVE(entry, next);
 		rte_free(entry);
 	}
 
-	LIST_FOREACH(entry, &pool->free_list, next) {
+	for (entry = LIST_FIRST(&pool->free_list);
+			entry && (next_entry = LIST_NEXT(entry, next), 1);
+			entry = next_entry) {
 		LIST_REMOVE(entry, next);
 		rte_free(entry);
 	}
@@ -6015,6 +6040,7 @@ i40e_dev_tunnel_filter_set(struct i40e_pf *pf,
 			uint8_t add)
 {
 	uint16_t ip_type;
+	uint32_t ipv4_addr;
 	uint8_t i, tun_type = 0;
 	/* internal varialbe to convert ipv6 byte order */
 	uint32_t convert_ipv6[4];
@@ -6040,14 +6066,15 @@ i40e_dev_tunnel_filter_set(struct i40e_pf *pf,
 	pfilter->inner_vlan = rte_cpu_to_le_16(tunnel_filter->inner_vlan);
 	if (tunnel_filter->ip_type == RTE_TUNNEL_IPTYPE_IPV4) {
 		ip_type = I40E_AQC_ADD_CLOUD_FLAGS_IPV4;
+		ipv4_addr = rte_be_to_cpu_32(tunnel_filter->ip_addr.ipv4_addr);
 		rte_memcpy(&pfilter->ipaddr.v4.data,
-				&rte_cpu_to_le_32(tunnel_filter->ip_addr.ipv4_addr),
+				&rte_cpu_to_le_32(ipv4_addr),
 				sizeof(pfilter->ipaddr.v4.data));
 	} else {
 		ip_type = I40E_AQC_ADD_CLOUD_FLAGS_IPV6;
 		for (i = 0; i < 4; i++) {
 			convert_ipv6[i] =
-			rte_cpu_to_le_32(tunnel_filter->ip_addr.ipv6_addr[i]);
+			rte_cpu_to_le_32(rte_be_to_cpu_32(tunnel_filter->ip_addr.ipv6_addr[i]));
 		}
 		rte_memcpy(&pfilter->ipaddr.v6.data, &convert_ipv6,
 				sizeof(pfilter->ipaddr.v6.data));
@@ -6756,43 +6783,60 @@ i40e_get_valid_input_set(enum i40e_filter_pctype pctype,
 	 */
 	static const uint64_t valid_fdir_inset_table[] = {
 		[I40E_FILTER_PCTYPE_FRAG_IPV4] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV4_SRC | I40E_INSET_IPV4_DST |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV4_TOS | I40E_INSET_IPV4_PROTO |
+		I40E_INSET_IPV4_TTL,
 		[I40E_FILTER_PCTYPE_NONF_IPV4_UDP] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV4_SRC | I40E_INSET_IPV4_DST |
-		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV4_TOS | I40E_INSET_IPV4_TTL |
+		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT,
 		[I40E_FILTER_PCTYPE_NONF_IPV4_TCP] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV4_SRC | I40E_INSET_IPV4_DST |
-		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV4_TOS | I40E_INSET_IPV4_TTL |
+		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT,
 		[I40E_FILTER_PCTYPE_NONF_IPV4_SCTP] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV4_SRC | I40E_INSET_IPV4_DST |
+		I40E_INSET_IPV4_TOS | I40E_INSET_IPV4_TTL |
 		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT |
-		I40E_INSET_SCTP_VT | I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_SCTP_VT,
 		[I40E_FILTER_PCTYPE_NONF_IPV4_OTHER] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV4_SRC | I40E_INSET_IPV4_DST |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV4_TOS | I40E_INSET_IPV4_PROTO |
+		I40E_INSET_IPV4_TTL,
 		[I40E_FILTER_PCTYPE_FRAG_IPV6] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV6_SRC | I40E_INSET_IPV6_DST |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV6_TC | I40E_INSET_IPV6_NEXT_HDR |
+		I40E_INSET_IPV6_HOP_LIMIT,
 		[I40E_FILTER_PCTYPE_NONF_IPV6_UDP] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV6_SRC | I40E_INSET_IPV6_DST |
-		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV6_TC | I40E_INSET_IPV6_HOP_LIMIT |
+		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT,
 		[I40E_FILTER_PCTYPE_NONF_IPV6_TCP] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV6_SRC | I40E_INSET_IPV6_DST |
-		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV6_TC | I40E_INSET_IPV6_HOP_LIMIT |
+		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT,
 		[I40E_FILTER_PCTYPE_NONF_IPV6_SCTP] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV6_SRC | I40E_INSET_IPV6_DST |
+		I40E_INSET_IPV6_TC | I40E_INSET_IPV6_HOP_LIMIT |
 		I40E_INSET_SRC_PORT | I40E_INSET_DST_PORT |
-		I40E_INSET_SCTP_VT | I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_SCTP_VT,
 		[I40E_FILTER_PCTYPE_NONF_IPV6_OTHER] =
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
 		I40E_INSET_IPV6_SRC | I40E_INSET_IPV6_DST |
-		I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_IPV6_TC | I40E_INSET_IPV6_NEXT_HDR |
+		I40E_INSET_IPV6_HOP_LIMIT,
 		[I40E_FILTER_PCTYPE_L2_PAYLOAD] =
-		I40E_INSET_LAST_ETHER_TYPE | I40E_INSET_FLEX_PAYLOAD,
+		I40E_INSET_VLAN_OUTER | I40E_INSET_VLAN_INNER |
+		I40E_INSET_LAST_ETHER_TYPE,
 	};
 
 	if (pctype > I40E_FILTER_PCTYPE_L2_PAYLOAD)
@@ -6890,11 +6934,14 @@ i40e_parse_input_set(uint64_t *inset,
 		{RTE_ETH_INPUT_SET_L3_DST_IP4, I40E_INSET_IPV4_DST},
 		{RTE_ETH_INPUT_SET_L3_IP4_TOS, I40E_INSET_IPV4_TOS},
 		{RTE_ETH_INPUT_SET_L3_IP4_PROTO, I40E_INSET_IPV4_PROTO},
+		{RTE_ETH_INPUT_SET_L3_IP4_TTL, I40E_INSET_IPV4_TTL},
 		{RTE_ETH_INPUT_SET_L3_SRC_IP6, I40E_INSET_IPV6_SRC},
 		{RTE_ETH_INPUT_SET_L3_DST_IP6, I40E_INSET_IPV6_DST},
 		{RTE_ETH_INPUT_SET_L3_IP6_TC, I40E_INSET_IPV6_TC},
 		{RTE_ETH_INPUT_SET_L3_IP6_NEXT_HEADER,
 			I40E_INSET_IPV6_NEXT_HDR},
+		{RTE_ETH_INPUT_SET_L3_IP6_HOP_LIMITS,
+			I40E_INSET_IPV6_HOP_LIMIT},
 		{RTE_ETH_INPUT_SET_L4_UDP_SRC_PORT, I40E_INSET_SRC_PORT},
 		{RTE_ETH_INPUT_SET_L4_TCP_SRC_PORT, I40E_INSET_SRC_PORT},
 		{RTE_ETH_INPUT_SET_L4_SCTP_SRC_PORT, I40E_INSET_SRC_PORT},
@@ -6981,10 +7028,12 @@ i40e_translate_input_set_reg(uint64_t input)
 		{I40E_INSET_IPV4_DST, I40E_REG_INSET_L3_DST_IP4},
 		{I40E_INSET_IPV4_TOS, I40E_REG_INSET_L3_IP4_TOS},
 		{I40E_INSET_IPV4_PROTO, I40E_REG_INSET_L3_IP4_PROTO},
+		{I40E_INSET_IPV4_TTL, I40E_REG_INSET_L3_IP4_TTL},
 		{I40E_INSET_IPV6_SRC, I40E_REG_INSET_L3_SRC_IP6},
 		{I40E_INSET_IPV6_DST, I40E_REG_INSET_L3_DST_IP6},
 		{I40E_INSET_IPV6_TC, I40E_REG_INSET_L3_IP6_TC},
 		{I40E_INSET_IPV6_NEXT_HDR, I40E_REG_INSET_L3_IP6_NEXT_HDR},
+		{I40E_INSET_IPV6_HOP_LIMIT, I40E_REG_INSET_L3_IP6_HOP_LIMIT},
 		{I40E_INSET_SRC_PORT, I40E_REG_INSET_L4_SRC_PORT},
 		{I40E_INSET_DST_PORT, I40E_REG_INSET_L4_DST_PORT},
 		{I40E_INSET_SCTP_VT, I40E_REG_INSET_L4_SCTP_VERIFICATION_TAG},
@@ -6997,7 +7046,7 @@ i40e_translate_input_set_reg(uint64_t input)
 			I40E_REG_INSET_TUNNEL_L4_UDP_SRC_PORT},
 		{I40E_INSET_TUNNEL_DST_PORT,
 			I40E_REG_INSET_TUNNEL_L4_UDP_DST_PORT},
-		{I40E_INSET_TUNNEL_ID, I40E_REG_INSET_TUNNEL_ID},
+		{I40E_INSET_VLAN_TUNNEL, I40E_REG_INSET_TUNNEL_VLAN},
 		{I40E_INSET_FLEX_PAYLOAD_W1, I40E_REG_INSET_FLEX_PAYLOAD_WORD1},
 		{I40E_INSET_FLEX_PAYLOAD_W2, I40E_REG_INSET_FLEX_PAYLOAD_WORD2},
 		{I40E_INSET_FLEX_PAYLOAD_W3, I40E_REG_INSET_FLEX_PAYLOAD_WORD3},
@@ -7020,59 +7069,52 @@ i40e_translate_input_set_reg(uint64_t input)
 	return val;
 }
 
-static uint8_t
+static int
 i40e_generate_inset_mask_reg(uint64_t inset, uint32_t *mask, uint8_t nb_elem)
 {
 	uint8_t i, idx = 0;
+	uint64_t inset_need_mask = inset;
 
 	static const struct {
 		uint64_t inset;
 		uint32_t mask;
 	} inset_mask_map[] = {
 		{I40E_INSET_IPV4_TOS, I40E_INSET_IPV4_TOS_MASK},
+		{I40E_INSET_IPV4_PROTO | I40E_INSET_IPV4_TTL, 0},
 		{I40E_INSET_IPV4_PROTO, I40E_INSET_IPV4_PROTO_MASK},
+		{I40E_INSET_IPV4_TTL, I40E_INSET_IPv4_TTL_MASK},
 		{I40E_INSET_IPV6_TC, I40E_INSET_IPV6_TC_MASK},
+		{I40E_INSET_IPV6_NEXT_HDR | I40E_INSET_IPV6_HOP_LIMIT, 0},
 		{I40E_INSET_IPV6_NEXT_HDR, I40E_INSET_IPV6_NEXT_HDR_MASK},
+		{I40E_INSET_IPV6_HOP_LIMIT, I40E_INSET_IPV6_HOP_LIMIT_MASK},
 	};
 
 	if (!inset || !mask || !nb_elem)
 		return 0;
 
-	if (!inset && nb_elem >= I40E_INSET_MASK_NUM_REG) {
-		for (i = 0; i < I40E_INSET_MASK_NUM_REG; i++)
-			mask[i] = 0;
-		return I40E_INSET_MASK_NUM_REG;
-	}
-
 	for (i = 0, idx = 0; i < RTE_DIM(inset_mask_map); i++) {
-		if (idx >= nb_elem)
-			break;
-		if (inset & inset_mask_map[i].inset) {
+		/* Clear the inset bit, if no MASK is required,
+		 * for example proto + ttl
+		 */
+		if ((inset & inset_mask_map[i].inset) ==
+		     inset_mask_map[i].inset && inset_mask_map[i].mask == 0)
+			inset_need_mask &= ~inset_mask_map[i].inset;
+		if (!inset_need_mask)
+			return 0;
+	}
+	for (i = 0, idx = 0; i < RTE_DIM(inset_mask_map); i++) {
+		if ((inset_need_mask & inset_mask_map[i].inset) ==
+		    inset_mask_map[i].inset) {
+			if (idx >= nb_elem) {
+				PMD_DRV_LOG(ERR, "exceed maximal number of bitmasks");
+				return -EINVAL;
+			}
 			mask[idx] = inset_mask_map[i].mask;
 			idx++;
 		}
 	}
 
 	return idx;
-}
-
-static uint64_t
-i40e_get_reg_inset(struct i40e_hw *hw, enum rte_filter_type filter,
-			    enum i40e_filter_pctype pctype)
-{
-	uint64_t reg = 0;
-
-	if (filter == RTE_ETH_FILTER_HASH) {
-		reg = i40e_read_rx_ctl(hw, I40E_GLQF_HASH_INSET(1, pctype));
-		reg <<= I40E_32_BIT_WIDTH;
-		reg |= i40e_read_rx_ctl(hw, I40E_GLQF_HASH_INSET(0, pctype));
-	} else if (filter == RTE_ETH_FILTER_FDIR) {
-		reg = i40e_read_rx_ctl(hw, I40E_PRTQF_FD_INSET(pctype, 1));
-		reg <<= I40E_32_BIT_WIDTH;
-		reg |= i40e_read_rx_ctl(hw, I40E_PRTQF_FD_INSET(pctype, 0));
-	}
-
-	return reg;
 }
 
 static void
@@ -7087,114 +7129,83 @@ i40e_check_write_reg(struct i40e_hw *hw, uint32_t addr, uint32_t val)
 		    (uint32_t)i40e_read_rx_ctl(hw, addr));
 }
 
-static int
-i40e_set_hash_inset_mask(struct i40e_hw *hw,
-			 enum i40e_filter_pctype pctype,
-			 enum rte_filter_input_set_op op,
-			 uint32_t *mask_reg,
-			 uint8_t num)
+static void
+i40e_filter_input_set_init(struct i40e_pf *pf)
 {
-	uint32_t reg;
-	uint8_t i;
+	struct i40e_hw *hw = I40E_PF_TO_HW(pf);
+	enum i40e_filter_pctype pctype;
+	uint64_t input_set, inset_reg;
+	uint32_t mask_reg[I40E_INSET_MASK_NUM_REG] = {0};
+	int num, i;
 
-	if (!mask_reg || num > RTE_ETH_INPUT_SET_SELECT)
-		return -EINVAL;
+	for (pctype = I40E_FILTER_PCTYPE_NONF_IPV4_UDP;
+	     pctype <= I40E_FILTER_PCTYPE_L2_PAYLOAD; pctype++) {
+		if (!I40E_VALID_PCTYPE(pctype))
+			continue;
+		input_set = i40e_get_default_input_set(pctype);
 
-	if (op == RTE_ETH_INPUT_SET_SELECT) {
-		for (i = 0; i < I40E_INSET_MASK_NUM_REG; i++) {
-			i40e_check_write_reg(hw, I40E_GLQF_HASH_MSK(i, pctype),
-					     0);
-			if (i >= num)
-				continue;
+		num = i40e_generate_inset_mask_reg(input_set, mask_reg,
+						   I40E_INSET_MASK_NUM_REG);
+		if (num < 0)
+			return;
+		inset_reg = i40e_translate_input_set_reg(input_set);
+
+		i40e_check_write_reg(hw, I40E_PRTQF_FD_INSET(pctype, 0),
+				      (uint32_t)(inset_reg & UINT32_MAX));
+		i40e_check_write_reg(hw, I40E_PRTQF_FD_INSET(pctype, 1),
+				     (uint32_t)((inset_reg >>
+				     I40E_32_BIT_WIDTH) & UINT32_MAX));
+		i40e_check_write_reg(hw, I40E_GLQF_HASH_INSET(0, pctype),
+				      (uint32_t)(inset_reg & UINT32_MAX));
+		i40e_check_write_reg(hw, I40E_GLQF_HASH_INSET(1, pctype),
+				     (uint32_t)((inset_reg >>
+				     I40E_32_BIT_WIDTH) & UINT32_MAX));
+
+		for (i = 0; i < num; i++) {
+			i40e_check_write_reg(hw, I40E_GLQF_FD_MSK(i, pctype),
+					     mask_reg[i]);
 			i40e_check_write_reg(hw, I40E_GLQF_HASH_MSK(i, pctype),
 					     mask_reg[i]);
 		}
-	} else if (op == RTE_ETH_INPUT_SET_ADD) {
-		uint8_t j, count = 0;
-
-		for (i = 0; i < I40E_INSET_MASK_NUM_REG; i++) {
-			reg = i40e_read_rx_ctl(hw,
-					       I40E_GLQF_HASH_MSK(i, pctype));
-			if (reg & I40E_GLQF_HASH_MSK_MASK_MASK)
-				count++;
-		}
-		if (count + num > I40E_INSET_MASK_NUM_REG)
-			return -EINVAL;
-
-		for (i = count, j = 0; i < I40E_INSET_MASK_NUM_REG; i++, j++)
-			i40e_check_write_reg(hw, I40E_GLQF_HASH_MSK(i, pctype),
-					     mask_reg[j]);
-	}
-
-	return 0;
-}
-
-static int
-i40e_set_fd_inset_mask(struct i40e_hw *hw,
-		       enum i40e_filter_pctype pctype,
-		       enum rte_filter_input_set_op op,
-		       uint32_t *mask_reg,
-		       uint8_t num)
-{
-	uint32_t reg;
-	uint8_t i;
-
-	if (!mask_reg || num > RTE_ETH_INPUT_SET_SELECT)
-		return -EINVAL;
-
-	if (op == RTE_ETH_INPUT_SET_SELECT) {
-		for (i = 0; i < I40E_INSET_MASK_NUM_REG; i++) {
+		/*clear unused mask registers of the pctype */
+		for (i = num; i < I40E_INSET_MASK_NUM_REG; i++) {
 			i40e_check_write_reg(hw, I40E_GLQF_FD_MSK(i, pctype),
 					     0);
-			if (i >= num)
-				continue;
-			i40e_check_write_reg(hw, I40E_GLQF_FD_MSK(i, pctype),
-					     mask_reg[i]);
+			i40e_check_write_reg(hw, I40E_GLQF_HASH_MSK(i, pctype),
+					     0);
 		}
-	} else if (op == RTE_ETH_INPUT_SET_ADD) {
-		uint8_t j, count = 0;
+		I40E_WRITE_FLUSH(hw);
 
-		for (i = 0; i < I40E_INSET_MASK_NUM_REG; i++) {
-			reg = i40e_read_rx_ctl(hw,
-					       I40E_GLQF_FD_MSK(i, pctype));
-			if (reg & I40E_GLQF_FD_MSK_MASK_MASK)
-				count++;
-		}
-		if (count + num > I40E_INSET_MASK_NUM_REG)
-			return -EINVAL;
-
-		for (i = count, j = 0; i < I40E_INSET_MASK_NUM_REG; i++, j++)
-			i40e_check_write_reg(hw, I40E_GLQF_FD_MSK(i, pctype),
-					     mask_reg[j]);
+		/* store the default input set */
+		pf->hash_input_set[pctype] = input_set;
+		pf->fdir.input_set[pctype] = input_set;
 	}
-
-	return 0;
 }
 
 int
-i40e_filter_inset_select(struct i40e_hw *hw,
-			 struct rte_eth_input_set_conf *conf,
-			 enum rte_filter_type filter)
+i40e_hash_filter_inset_select(struct i40e_hw *hw,
+			 struct rte_eth_input_set_conf *conf)
 {
+	struct i40e_pf *pf = &((struct i40e_adapter *)hw->back)->pf;
 	enum i40e_filter_pctype pctype;
-	uint64_t inset_reg = 0, input_set;
-	uint32_t mask_reg[I40E_INSET_MASK_NUM_REG];
-	uint8_t num;
-	int ret;
+	uint64_t input_set, inset_reg = 0;
+	uint32_t mask_reg[I40E_INSET_MASK_NUM_REG] = {0};
+	int ret, i, num;
 
-	if (!hw || !conf) {
+	if (!conf) {
 		PMD_DRV_LOG(ERR, "Invalid pointer");
 		return -EFAULT;
+	}
+	if (conf->op != RTE_ETH_INPUT_SET_SELECT &&
+	    conf->op != RTE_ETH_INPUT_SET_ADD) {
+		PMD_DRV_LOG(ERR, "Unsupported input set operation");
+		return -EINVAL;
 	}
 
 	pctype = i40e_flowtype_to_pctype(conf->flow_type);
 	if (pctype == 0 || pctype > I40E_FILTER_PCTYPE_L2_PAYLOAD) {
 		PMD_DRV_LOG(ERR, "Not supported flow type (%u)",
 			    conf->flow_type);
-		return -EINVAL;
-	}
-	if (filter != RTE_ETH_FILTER_HASH && filter != RTE_ETH_FILTER_FDIR) {
-		PMD_DRV_LOG(ERR, "Not supported filter type (%u)", filter);
 		return -EINVAL;
 	}
 
@@ -7204,49 +7215,118 @@ i40e_filter_inset_select(struct i40e_hw *hw,
 		PMD_DRV_LOG(ERR, "Failed to parse input set");
 		return -EINVAL;
 	}
-	if (i40e_validate_input_set(pctype, filter, input_set) != 0) {
+	if (i40e_validate_input_set(pctype, RTE_ETH_FILTER_HASH,
+				    input_set) != 0) {
+		PMD_DRV_LOG(ERR, "Invalid input set");
+		return -EINVAL;
+	}
+	if (conf->op == RTE_ETH_INPUT_SET_ADD) {
+		/* get inset value in register */
+		inset_reg = i40e_read_rx_ctl(hw, I40E_GLQF_HASH_INSET(1, pctype));
+		inset_reg <<= I40E_32_BIT_WIDTH;
+		inset_reg |= i40e_read_rx_ctl(hw, I40E_GLQF_HASH_INSET(0, pctype));
+		input_set |= pf->hash_input_set[pctype];
+	}
+	num = i40e_generate_inset_mask_reg(input_set, mask_reg,
+					   I40E_INSET_MASK_NUM_REG);
+	if (num < 0)
+		return -EINVAL;
+
+	inset_reg |= i40e_translate_input_set_reg(input_set);
+
+	i40e_check_write_reg(hw, I40E_GLQF_HASH_INSET(0, pctype),
+			      (uint32_t)(inset_reg & UINT32_MAX));
+	i40e_check_write_reg(hw, I40E_GLQF_HASH_INSET(1, pctype),
+			     (uint32_t)((inset_reg >>
+			     I40E_32_BIT_WIDTH) & UINT32_MAX));
+
+	for (i = 0; i < num; i++)
+		i40e_check_write_reg(hw, I40E_GLQF_HASH_MSK(i, pctype),
+				     mask_reg[i]);
+	/*clear unused mask registers of the pctype */
+	for (i = num; i < I40E_INSET_MASK_NUM_REG; i++)
+		i40e_check_write_reg(hw, I40E_GLQF_HASH_MSK(i, pctype),
+				     0);
+	I40E_WRITE_FLUSH(hw);
+
+	pf->hash_input_set[pctype] = input_set;
+	return 0;
+}
+
+int
+i40e_fdir_filter_inset_select(struct i40e_pf *pf,
+			 struct rte_eth_input_set_conf *conf)
+{
+	struct i40e_hw *hw = I40E_PF_TO_HW(pf);
+	enum i40e_filter_pctype pctype;
+	uint64_t input_set, inset_reg = 0;
+	uint32_t mask_reg[I40E_INSET_MASK_NUM_REG] = {0};
+	int ret, i, num;
+
+	if (!hw || !conf) {
+		PMD_DRV_LOG(ERR, "Invalid pointer");
+		return -EFAULT;
+	}
+	if (conf->op != RTE_ETH_INPUT_SET_SELECT &&
+	    conf->op != RTE_ETH_INPUT_SET_ADD) {
+		PMD_DRV_LOG(ERR, "Unsupported input set operation");
+		return -EINVAL;
+	}
+
+	pctype = i40e_flowtype_to_pctype(conf->flow_type);
+	if (pctype == 0 || pctype > I40E_FILTER_PCTYPE_L2_PAYLOAD) {
+		PMD_DRV_LOG(ERR, "Not supported flow type (%u)",
+			    conf->flow_type);
+		return -EINVAL;
+	}
+	ret = i40e_parse_input_set(&input_set, pctype, conf->field,
+				   conf->inset_size);
+	if (ret) {
+		PMD_DRV_LOG(ERR, "Failed to parse input set");
+		return -EINVAL;
+	}
+	if (i40e_validate_input_set(pctype, RTE_ETH_FILTER_FDIR,
+				    input_set) != 0) {
 		PMD_DRV_LOG(ERR, "Invalid input set");
 		return -EINVAL;
 	}
 
-	if (conf->op == RTE_ETH_INPUT_SET_ADD) {
-		inset_reg |= i40e_get_reg_inset(hw, filter, pctype);
-	} else if (conf->op != RTE_ETH_INPUT_SET_SELECT) {
-		PMD_DRV_LOG(ERR, "Unsupported input set operation");
-		return -EINVAL;
-	}
+	/* get inset value in register */
+	inset_reg = i40e_read_rx_ctl(hw, I40E_PRTQF_FD_INSET(pctype, 1));
+	inset_reg <<= I40E_32_BIT_WIDTH;
+	inset_reg |= i40e_read_rx_ctl(hw, I40E_PRTQF_FD_INSET(pctype, 0));
+
+	/* Can not change the inset reg for flex payload for fdir,
+	 * it is done by writing I40E_PRTQF_FD_FLXINSET
+	 * in i40e_set_flex_mask_on_pctype.
+	 */
+	if (conf->op == RTE_ETH_INPUT_SET_SELECT)
+		inset_reg &= I40E_REG_INSET_FLEX_PAYLOAD_WORDS;
+	else
+		input_set |= pf->fdir.input_set[pctype];
 	num = i40e_generate_inset_mask_reg(input_set, mask_reg,
 					   I40E_INSET_MASK_NUM_REG);
+	if (num < 0)
+		return -EINVAL;
+
 	inset_reg |= i40e_translate_input_set_reg(input_set);
 
-	if (filter == RTE_ETH_FILTER_HASH) {
-		ret = i40e_set_hash_inset_mask(hw, pctype, conf->op, mask_reg,
-					       num);
-		if (ret)
-			return -EINVAL;
+	i40e_check_write_reg(hw, I40E_PRTQF_FD_INSET(pctype, 0),
+			      (uint32_t)(inset_reg & UINT32_MAX));
+	i40e_check_write_reg(hw, I40E_PRTQF_FD_INSET(pctype, 1),
+			     (uint32_t)((inset_reg >>
+			     I40E_32_BIT_WIDTH) & UINT32_MAX));
 
-		i40e_check_write_reg(hw, I40E_GLQF_HASH_INSET(0, pctype),
-				      (uint32_t)(inset_reg & UINT32_MAX));
-		i40e_check_write_reg(hw, I40E_GLQF_HASH_INSET(1, pctype),
-				     (uint32_t)((inset_reg >>
-				     I40E_32_BIT_WIDTH) & UINT32_MAX));
-	} else if (filter == RTE_ETH_FILTER_FDIR) {
-		ret = i40e_set_fd_inset_mask(hw, pctype, conf->op, mask_reg,
-					     num);
-		if (ret)
-			return -EINVAL;
-
-		i40e_check_write_reg(hw, I40E_PRTQF_FD_INSET(pctype, 0),
-				      (uint32_t)(inset_reg & UINT32_MAX));
-		i40e_check_write_reg(hw, I40E_PRTQF_FD_INSET(pctype, 1),
-				     (uint32_t)((inset_reg >>
-				     I40E_32_BIT_WIDTH) & UINT32_MAX));
-	} else {
-		PMD_DRV_LOG(ERR, "Not supported filter type (%u)", filter);
-		return -EINVAL;
-	}
+	for (i = 0; i < num; i++)
+		i40e_check_write_reg(hw, I40E_GLQF_FD_MSK(i, pctype),
+				     mask_reg[i]);
+	/*clear unused mask registers of the pctype */
+	for (i = num; i < I40E_INSET_MASK_NUM_REG; i++)
+		i40e_check_write_reg(hw, I40E_GLQF_FD_MSK(i, pctype),
+				     0);
 	I40E_WRITE_FLUSH(hw);
 
+	pf->fdir.input_set[pctype] = input_set;
 	return 0;
 }
 
@@ -7298,9 +7378,8 @@ i40e_hash_filter_set(struct i40e_hw *hw, struct rte_eth_hash_filter_info *info)
 				&(info->info.global_conf));
 		break;
 	case RTE_ETH_HASH_FILTER_INPUT_SET_SELECT:
-		ret = i40e_filter_inset_select(hw,
-					       &(info->info.input_set_conf),
-					       RTE_ETH_FILTER_HASH);
+		ret = i40e_hash_filter_inset_select(hw,
+					       &(info->info.input_set_conf));
 		break;
 
 	default:
@@ -8087,15 +8166,15 @@ i40e_start_timecounters(struct rte_eth_dev *dev)
 	rte_i40e_dev_atomic_read_link_status(dev, &link);
 
 	switch (link.link_speed) {
-	case ETH_LINK_SPEED_40G:
+	case ETH_SPEED_NUM_40G:
 		tsync_inc_l = I40E_PTP_40GB_INCVAL & 0xFFFFFFFF;
 		tsync_inc_h = I40E_PTP_40GB_INCVAL >> 32;
 		break;
-	case ETH_LINK_SPEED_10G:
+	case ETH_SPEED_NUM_10G:
 		tsync_inc_l = I40E_PTP_10GB_INCVAL & 0xFFFFFFFF;
 		tsync_inc_h = I40E_PTP_10GB_INCVAL >> 32;
 		break;
-	case ETH_LINK_SPEED_1000:
+	case ETH_SPEED_NUM_1G:
 		tsync_inc_l = I40E_PTP_1GB_INCVAL & 0xFFFFFFFF;
 		tsync_inc_h = I40E_PTP_1GB_INCVAL >> 32;
 		break;
@@ -8821,7 +8900,7 @@ i40e_dev_get_dcb_info(struct rte_eth_dev *dev,
 	struct i40e_vsi *vsi = pf->main_vsi;
 	struct i40e_dcbx_config *dcb_cfg = &hw->local_dcbx_config;
 	uint16_t bsf, tc_mapping;
-	int i, j;
+	int i, j = 0;
 
 	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_DCB_FLAG)
 		dcb_info->nb_tcs = rte_bsf32(vsi->enabled_tc + 1);
@@ -8832,13 +8911,12 @@ i40e_dev_get_dcb_info(struct rte_eth_dev *dev,
 	for (i = 0; i < dcb_info->nb_tcs; i++)
 		dcb_info->tc_bws[i] = dcb_cfg->etscfg.tcbwtable[i];
 
-	j = 0;
-	do {
+	/* get queue mapping if vmdq is disabled */
+	if (!pf->nb_cfg_vmdq_vsi) {
 		for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++) {
 			if (!(vsi->enabled_tc & (1 << i)))
 				continue;
 			tc_mapping = rte_le_to_cpu_16(vsi->info.tc_mapping[i]);
-			/* only main vsi support multi TCs */
 			dcb_info->tc_queue.tc_rxq[j][i].base =
 				(tc_mapping & I40E_AQ_VSI_TC_QUE_OFFSET_MASK) >>
 				I40E_AQ_VSI_TC_QUE_OFFSET_SHIFT;
@@ -8850,7 +8928,27 @@ i40e_dev_get_dcb_info(struct rte_eth_dev *dev,
 			dcb_info->tc_queue.tc_txq[j][i].nb_queue =
 				dcb_info->tc_queue.tc_rxq[j][i].nb_queue;
 		}
+		return 0;
+	}
+
+	/* get queue mapping if vmdq is enabled */
+	do {
 		vsi = pf->vmdq[j].vsi;
+		for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++) {
+			if (!(vsi->enabled_tc & (1 << i)))
+				continue;
+			tc_mapping = rte_le_to_cpu_16(vsi->info.tc_mapping[i]);
+			dcb_info->tc_queue.tc_rxq[j][i].base =
+				(tc_mapping & I40E_AQ_VSI_TC_QUE_OFFSET_MASK) >>
+				I40E_AQ_VSI_TC_QUE_OFFSET_SHIFT;
+			dcb_info->tc_queue.tc_txq[j][i].base =
+				dcb_info->tc_queue.tc_rxq[j][i].base;
+			bsf = (tc_mapping & I40E_AQ_VSI_TC_QUE_NUMBER_MASK) >>
+				I40E_AQ_VSI_TC_QUE_NUMBER_SHIFT;
+			dcb_info->tc_queue.tc_rxq[j][i].nb_queue = 1 << bsf;
+			dcb_info->tc_queue.tc_txq[j][i].nb_queue =
+				dcb_info->tc_queue.tc_rxq[j][i].nb_queue;
+		}
 		j++;
 	} while (j < RTE_MIN(pf->nb_cfg_vmdq_vsi, ETH_MAX_VMDQ_POOL));
 	return 0;

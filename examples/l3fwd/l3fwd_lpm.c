@@ -105,10 +105,6 @@ static struct ipv6_l3fwd_lpm_route ipv6_l3fwd_lpm_route_array[] = {
 struct rte_lpm *ipv4_l3fwd_lpm_lookup_struct[NB_SOCKETS];
 struct rte_lpm6 *ipv6_l3fwd_lpm_lookup_struct[NB_SOCKETS];
 
-/*
- * Include header file if SSE4_1 is enabled for
- * buffer optimization i.e. ENABLE_MULTI_BUFFER_OPTIMIZE=1.
- */
 #if defined(__SSE4_1__)
 #include "l3fwd_lpm_sse.h"
 #else
@@ -159,8 +155,8 @@ lpm_main_loop(__attribute__((unused)) void *dummy)
 		diff_tsc = cur_tsc - prev_tsc;
 		if (unlikely(diff_tsc > drain_tsc)) {
 
-			for (i = 0; i < qconf->n_rx_queue; i++) {
-				portid = qconf->rx_queue_list[i].port_id;
+			for (i = 0; i < qconf->n_tx_port; ++i) {
+				portid = qconf->tx_port_id[i];
 				if (qconf->tx_mbufs[portid].len == 0)
 					continue;
 				send_burst(qconf,
@@ -183,10 +179,6 @@ lpm_main_loop(__attribute__((unused)) void *dummy)
 			if (nb_rx == 0)
 				continue;
 
-			/*
-			 * For SSE4_1 use ENABLE_MULTI_BUFFER_OPTIMIZE=1
-			 * code.
-			 */
 #if defined(__SSE4_1__)
 			l3fwd_lpm_send_packets(nb_rx, pkts_burst,
 						portid, qconf);
@@ -283,6 +275,71 @@ setup_lpm(const int socketid)
 			ipv6_l3fwd_lpm_route_array[i].depth,
 			ipv6_l3fwd_lpm_route_array[i].if_out);
 	}
+}
+
+int
+lpm_check_ptype(int portid)
+{
+	int i, ret;
+	int ptype_l3_ipv4 = 0, ptype_l3_ipv6 = 0;
+	uint32_t ptype_mask = RTE_PTYPE_L3_MASK;
+
+	ret = rte_eth_dev_get_supported_ptypes(portid, ptype_mask, NULL, 0);
+	if (ret <= 0)
+		return 0;
+
+	uint32_t ptypes[ret];
+
+	ret = rte_eth_dev_get_supported_ptypes(portid, ptype_mask, ptypes, ret);
+	for (i = 0; i < ret; ++i) {
+		if (ptypes[i] & RTE_PTYPE_L3_IPV4)
+			ptype_l3_ipv4 = 1;
+		if (ptypes[i] & RTE_PTYPE_L3_IPV6)
+			ptype_l3_ipv6 = 1;
+	}
+
+	if (ptype_l3_ipv4 == 0)
+		printf("port %d cannot parse RTE_PTYPE_L3_IPV4\n", portid);
+
+	if (ptype_l3_ipv6 == 0)
+		printf("port %d cannot parse RTE_PTYPE_L3_IPV6\n", portid);
+
+	if (ptype_l3_ipv4 && ptype_l3_ipv6)
+		return 1;
+
+	return 0;
+
+}
+
+static inline void
+lpm_parse_ptype(struct rte_mbuf *m)
+{
+	struct ether_hdr *eth_hdr;
+	uint32_t packet_type = RTE_PTYPE_UNKNOWN;
+	uint16_t ether_type;
+
+	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+	ether_type = eth_hdr->ether_type;
+	if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv4))
+		packet_type |= RTE_PTYPE_L3_IPV4_EXT_UNKNOWN;
+	else if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv6))
+		packet_type |= RTE_PTYPE_L3_IPV6_EXT_UNKNOWN;
+
+	m->packet_type = packet_type;
+}
+
+uint16_t
+lpm_cb_parse_ptype(uint8_t port __rte_unused, uint16_t queue __rte_unused,
+		   struct rte_mbuf *pkts[], uint16_t nb_pkts,
+		   uint16_t max_pkts __rte_unused,
+		   void *user_param __rte_unused)
+{
+	unsigned i;
+
+	for (i = 0; i < nb_pkts; ++i)
+		lpm_parse_ptype(pkts[i]);
+
+	return nb_pkts;
 }
 
 /* Return ipv4/ipv6 lpm fwd lookup struct. */

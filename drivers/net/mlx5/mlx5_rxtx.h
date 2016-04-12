@@ -116,6 +116,7 @@ struct rxq {
 	unsigned int csum:1; /* Enable checksum offloading. */
 	unsigned int csum_l2tun:1; /* Same for L2 tunnels. */
 	unsigned int vlan_strip:1; /* Enable VLAN stripping. */
+	unsigned int crc_present:1; /* CRC must be subtracted. */
 	union {
 		struct rxq_elt_sp (*sp)[]; /* Scattered RX elements. */
 		struct rxq_elt (*no_sp)[]; /* RX elements. */
@@ -254,11 +255,20 @@ struct txq {
 	struct priv *priv; /* Back pointer to private data. */
 	int32_t (*poll_cnt)(struct ibv_cq *cq, uint32_t max);
 	int (*send_pending)();
+#ifdef HAVE_VERBS_VLAN_INSERTION
+	int (*send_pending_vlan)();
+#endif
 #if MLX5_PMD_MAX_INLINE > 0
 	int (*send_pending_inline)();
+#ifdef HAVE_VERBS_VLAN_INSERTION
+	int (*send_pending_inline_vlan)();
+#endif
 #endif
 #if MLX5_PMD_SGE_WR_N > 1
 	int (*send_pending_sg_list)();
+#ifdef HAVE_VERBS_VLAN_INSERTION
+	int (*send_pending_sg_list_vlan)();
+#endif
 #endif
 	int (*send_flush)(struct ibv_qp *qp);
 	struct ibv_cq *cq; /* Completion Queue. */
@@ -282,7 +292,11 @@ struct txq {
 	/* Elements used only for init part are here. */
 	linear_t (*elts_linear)[]; /* Linearized buffers. */
 	struct ibv_mr *mr_linear; /* Memory Region for linearized buffers. */
+#ifdef HAVE_VERBS_VLAN_INSERTION
+	struct ibv_exp_qp_burst_family_v1 *if_qp; /* QP burst interface. */
+#else
 	struct ibv_exp_qp_burst_family *if_qp; /* QP burst interface. */
+#endif
 	struct ibv_exp_cq_family *if_cq; /* CQ interface. */
 	struct ibv_exp_res_domain *rd; /* Resource Domain. */
 	unsigned int socket; /* CPU socket ID for allocations. */
@@ -309,13 +323,21 @@ int rxq_setup(struct rte_eth_dev *, struct rxq *, uint16_t, unsigned int,
 int mlx5_rx_queue_setup(struct rte_eth_dev *, uint16_t, uint16_t, unsigned int,
 			const struct rte_eth_rxconf *, struct rte_mempool *);
 void mlx5_rx_queue_release(void *);
+uint16_t mlx5_rx_burst_secondary_setup(void *dpdk_rxq, struct rte_mbuf **pkts,
+			      uint16_t pkts_n);
+
 
 /* mlx5_txq.c */
 
 void txq_cleanup(struct txq *);
+int txq_setup(struct rte_eth_dev *dev, struct txq *txq, uint16_t desc,
+	  unsigned int socket, const struct rte_eth_txconf *conf);
+
 int mlx5_tx_queue_setup(struct rte_eth_dev *, uint16_t, uint16_t, unsigned int,
 			const struct rte_eth_txconf *);
 void mlx5_tx_queue_release(void *);
+uint16_t mlx5_tx_burst_secondary_setup(void *dpdk_txq, struct rte_mbuf **pkts,
+			      uint16_t pkts_n);
 
 /* mlx5_rxtx.c */
 

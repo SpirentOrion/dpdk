@@ -209,8 +209,11 @@ rte_lpm_create_v20(const char *name, int socket_id, int max_rules,
 		if (strncmp(name, lpm->name, RTE_LPM_NAMESIZE) == 0)
 			break;
 	}
-	if (te != NULL)
+	lpm = NULL;
+	if (te != NULL) {
+		rte_errno = EEXIST;
 		goto exit;
+	}
 
 	/* allocate tailq entry */
 	te = rte_zmalloc("LPM_TAILQ_ENTRY", sizeof(*te), 0);
@@ -280,8 +283,11 @@ rte_lpm_create_v1604(const char *name, int socket_id,
 		if (strncmp(name, lpm->name, RTE_LPM_NAMESIZE) == 0)
 			break;
 	}
-	if (te != NULL)
+	lpm = NULL;
+	if (te != NULL) {
+		rte_errno = EEXIST;
 		goto exit;
+	}
 
 	/* allocate tailq entry */
 	te = rte_zmalloc("LPM_TAILQ_ENTRY", sizeof(*te), 0);
@@ -303,8 +309,9 @@ rte_lpm_create_v1604(const char *name, int socket_id,
 			(size_t)rules_size, RTE_CACHE_LINE_SIZE, socket_id);
 
 	if (lpm->rules_tbl == NULL) {
-		RTE_LOG(ERR, LPM, "LPM memory allocation failed\n");
+		RTE_LOG(ERR, LPM, "LPM rules_tbl memory allocation failed\n");
 		rte_free(lpm);
+		lpm = NULL;
 		rte_free(te);
 		goto exit;
 	}
@@ -313,8 +320,9 @@ rte_lpm_create_v1604(const char *name, int socket_id,
 			(size_t)tbl8s_size, RTE_CACHE_LINE_SIZE, socket_id);
 
 	if (lpm->tbl8 == NULL) {
-		RTE_LOG(ERR, LPM, "LPM memory allocation failed\n");
+		RTE_LOG(ERR, LPM, "LPM tbl8 memory allocation failed\n");
 		rte_free(lpm);
+		lpm = NULL;
 		rte_free(te);
 		goto exit;
 	}
@@ -360,15 +368,12 @@ rte_lpm_free_v20(struct rte_lpm_v20 *lpm)
 		if (te->data == (void *) lpm)
 			break;
 	}
-	if (te == NULL) {
-		rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
-		return;
-	}
-
-	TAILQ_REMOVE(lpm_list, te, next);
+	if (te != NULL)
+		TAILQ_REMOVE(lpm_list, te, next);
 
 	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
 
+	rte_free(lpm->rules_tbl);
 	rte_free(lpm);
 	rte_free(te);
 }
@@ -393,15 +398,12 @@ rte_lpm_free_v1604(struct rte_lpm *lpm)
 		if (te->data == (void *) lpm)
 			break;
 	}
-	if (te == NULL) {
-		rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
-		return;
-	}
-
-	TAILQ_REMOVE(lpm_list, te, next);
+	if (te != NULL)
+		TAILQ_REMOVE(lpm_list, te, next);
 
 	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
 
+	rte_free(lpm->rules_tbl);
 	rte_free(lpm);
 	rte_free(te);
 }
@@ -748,11 +750,11 @@ add_depth_small_v20(struct rte_lpm_v20 *lpm, uint32_t ip, uint8_t depth,
 				lpm->tbl24[i].depth <= depth)) {
 
 			struct rte_lpm_tbl_entry_v20 new_tbl24_entry = {
-				{ .next_hop = next_hop, },
 				.valid = VALID,
 				.valid_group = 0,
 				.depth = depth,
 			};
+			new_tbl24_entry.next_hop = next_hop;
 
 			/* Setting tbl24 entry in one go to avoid race
 			 * conditions
@@ -779,8 +781,8 @@ add_depth_small_v20(struct rte_lpm_v20 *lpm, uint32_t ip, uint8_t depth,
 						.valid = VALID,
 						.valid_group = VALID,
 						.depth = depth,
-						.next_hop = next_hop,
 					};
+					new_tbl8_entry.next_hop = next_hop;
 
 					/*
 					 * Setting tbl8 entry in one go to avoid
@@ -979,10 +981,9 @@ add_depth_big_v20(struct rte_lpm_v20 *lpm, uint32_t ip_masked, uint8_t depth,
 				struct rte_lpm_tbl_entry_v20 new_tbl8_entry = {
 					.valid = VALID,
 					.depth = depth,
-					.next_hop = next_hop,
 					.valid_group = lpm->tbl8[i].valid_group,
 				};
-
+				new_tbl8_entry.next_hop = next_hop;
 				/*
 				 * Setting tbl8 entry in one go to avoid race
 				 * condition
@@ -1379,9 +1380,9 @@ delete_depth_small_v20(struct rte_lpm_v20 *lpm, uint32_t ip_masked,
 			.valid = VALID,
 			.valid_group = VALID,
 			.depth = sub_rule_depth,
-			.next_hop = lpm->rules_tbl
-			[sub_rule_index].next_hop,
 		};
+		new_tbl8_entry.next_hop =
+				lpm->rules_tbl[sub_rule_index].next_hop;
 
 		for (i = tbl24_index; i < (tbl24_index + tbl24_range); i++) {
 
@@ -1643,9 +1644,10 @@ delete_depth_big_v20(struct rte_lpm_v20 *lpm, uint32_t ip_masked,
 			.valid = VALID,
 			.depth = sub_rule_depth,
 			.valid_group = lpm->tbl8[tbl8_group_start].valid_group,
-			.next_hop = lpm->rules_tbl[sub_rule_index].next_hop,
 		};
 
+		new_tbl8_entry.next_hop =
+				lpm->rules_tbl[sub_rule_index].next_hop;
 		/*
 		 * Loop through the range of entries on tbl8 for which the
 		 * rule_to_delete must be modified.

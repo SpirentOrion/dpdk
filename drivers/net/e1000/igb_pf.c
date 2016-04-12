@@ -172,8 +172,8 @@ int igb_pf_host_configure(struct rte_eth_dev *eth_dev)
 	E1000_WRITE_REG(hw, E1000_VT_CTL, vtctl);
 
 	/* Enable pools reserved to PF only */
-	E1000_WRITE_REG(hw, E1000_VFRE, (~0) << vf_num);
-	E1000_WRITE_REG(hw, E1000_VFTE, (~0) << vf_num);
+	E1000_WRITE_REG(hw, E1000_VFRE, (~0U) << vf_num);
+	E1000_WRITE_REG(hw, E1000_VFTE, (~0U) << vf_num);
 
 	/* PFDMA Tx General Switch Control Enables VMDQ loopback */
 	if (hw->mac.type == e1000_i350)
@@ -218,8 +218,7 @@ int igb_pf_host_configure(struct rte_eth_dev *eth_dev)
 static void
 set_rx_mode(struct rte_eth_dev *dev)
 {
-	struct rte_eth_dev_data *dev_data =
-		(struct rte_eth_dev_data*)dev->data->dev_private;
+	struct rte_eth_dev_data *dev_data = dev->data;
 	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	uint32_t fctrl, vmolr = E1000_VMOLR_BAM | E1000_VMOLR_AUPE;
 	uint16_t vfn = dev_num_vf(dev);

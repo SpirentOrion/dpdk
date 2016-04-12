@@ -817,11 +817,11 @@ nfp_net_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complete)
 	memset(&link, 0, sizeof(struct rte_eth_link));
 
 	if (nn_link_status & NFP_NET_CFG_STS_LINK)
-		link.link_status = 1;
+		link.link_status = ETH_LINK_UP;
 
 	link.link_duplex = ETH_LINK_FULL_DUPLEX;
 	/* Other cards can limit the tx and rx rate per VF */
-	link.link_speed = ETH_LINK_SPEED_40G;
+	link.link_speed = ETH_SPEED_NUM_40G;
 
 	if (old.link_status != link.link_status) {
 		nfp_net_dev_atomic_write_link_status(dev, &link);
@@ -1061,6 +1061,25 @@ nfp_net_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 
 	dev_info->reta_size = NFP_NET_CFG_RSS_ITBL_SZ;
 	dev_info->hash_key_size = NFP_NET_CFG_RSS_KEY_SZ;
+
+	dev_info->speed_capa = ETH_LINK_SPEED_40G | ETH_LINK_SPEED_100G;
+}
+
+static const uint32_t *
+nfp_net_supported_ptypes_get(struct rte_eth_dev *dev)
+{
+	static const uint32_t ptypes[] = {
+		/* refers to nfp_net_set_hash() */
+		RTE_PTYPE_INNER_L3_IPV4,
+		RTE_PTYPE_INNER_L3_IPV6,
+		RTE_PTYPE_INNER_L3_IPV6_EXT,
+		RTE_PTYPE_INNER_L4_MASK,
+		RTE_PTYPE_UNKNOWN
+	};
+
+	if (dev->rx_pkt_burst == nfp_net_recv_pkts)
+		return ptypes;
+	return NULL;
 }
 
 static uint32_t
@@ -2272,7 +2291,7 @@ nfp_net_rss_hash_conf_get(struct rte_eth_dev *dev,
 }
 
 /* Initialise and register driver with DPDK Application */
-static struct eth_dev_ops nfp_net_eth_dev_ops = {
+static const struct eth_dev_ops nfp_net_eth_dev_ops = {
 	.dev_configure		= nfp_net_configure,
 	.dev_start		= nfp_net_start,
 	.dev_stop		= nfp_net_stop,
@@ -2283,6 +2302,7 @@ static struct eth_dev_ops nfp_net_eth_dev_ops = {
 	.stats_get		= nfp_net_stats_get,
 	.stats_reset		= nfp_net_stats_reset,
 	.dev_infos_get		= nfp_net_infos_get,
+	.dev_supported_ptypes_get = nfp_net_supported_ptypes_get,
 	.mtu_set		= nfp_net_dev_mtu_set,
 	.vlan_offload_set	= nfp_net_vlan_offload_set,
 	.reta_update		= nfp_net_reta_update,
@@ -2319,6 +2339,8 @@ nfp_net_init(struct rte_eth_dev *eth_dev)
 		return 0;
 
 	pci_dev = eth_dev->pci_dev;
+	rte_eth_copy_pci_info(eth_dev, pci_dev);
+
 	hw->device_id = pci_dev->id.device_id;
 	hw->vendor_id = pci_dev->id.vendor_id;
 	hw->subsystem_device_id = pci_dev->id.subsystem_device_id;

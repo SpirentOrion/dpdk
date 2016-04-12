@@ -34,17 +34,9 @@
 #ifndef __L3FWD_EM_HLM_SSE_H__
 #define __L3FWD_EM_HLM_SSE_H__
 
-/**
- * @file
- * This is an optional implementation of packet classification in Exact-Match
- * path using rte_hash_lookup_multi method from previous implementation.
- * While sequential classification seems to be faster, it's disabled by default
- * and can be enabled with HASH_LOOKUP_MULTI global define in compilation time.
- */
-
 #include "l3fwd_sse.h"
 
-static inline void
+static inline __attribute__((always_inline)) void
 em_get_dst_port_ipv4x8(struct lcore_conf *qconf, struct rte_mbuf *m[8],
 		uint8_t portid, uint16_t dst_port[8])
 {
@@ -77,14 +69,14 @@ em_get_dst_port_ipv4x8(struct lcore_conf *qconf, struct rte_mbuf *m[8],
 				sizeof(struct ether_hdr) +
 				offsetof(struct ipv4_hdr, time_to_live)));
 
-	key[0].xmm = _mm_and_si128(data[0], mask0);
-	key[1].xmm = _mm_and_si128(data[1], mask0);
-	key[2].xmm = _mm_and_si128(data[2], mask0);
-	key[3].xmm = _mm_and_si128(data[3], mask0);
-	key[4].xmm = _mm_and_si128(data[4], mask0);
-	key[5].xmm = _mm_and_si128(data[5], mask0);
-	key[6].xmm = _mm_and_si128(data[6], mask0);
-	key[7].xmm = _mm_and_si128(data[7], mask0);
+	key[0].xmm = _mm_and_si128(data[0], mask0.x);
+	key[1].xmm = _mm_and_si128(data[1], mask0.x);
+	key[2].xmm = _mm_and_si128(data[2], mask0.x);
+	key[3].xmm = _mm_and_si128(data[3], mask0.x);
+	key[4].xmm = _mm_and_si128(data[4], mask0.x);
+	key[5].xmm = _mm_and_si128(data[5], mask0.x);
+	key[6].xmm = _mm_and_si128(data[6], mask0.x);
+	key[7].xmm = _mm_and_si128(data[7], mask0.x);
 
 	const void *key_array[8] = {&key[0], &key[1], &key[2], &key[3],
 				&key[4], &key[5], &key[6], &key[7]};
@@ -168,21 +160,21 @@ get_ipv6_5tuple(struct rte_mbuf *m0, __m128i mask0,
 	key->xmm[2] = _mm_and_si128(tmpdata2, mask1);
 }
 
-static inline void
+static inline __attribute__((always_inline)) void
 em_get_dst_port_ipv6x8(struct lcore_conf *qconf, struct rte_mbuf *m[8],
 		uint8_t portid, uint16_t dst_port[8])
 {
 	int32_t ret[8];
 	union ipv6_5tuple_host key[8];
 
-	get_ipv6_5tuple(m[0], mask1, mask2, &key[0]);
-	get_ipv6_5tuple(m[1], mask1, mask2, &key[1]);
-	get_ipv6_5tuple(m[2], mask1, mask2, &key[2]);
-	get_ipv6_5tuple(m[3], mask1, mask2, &key[3]);
-	get_ipv6_5tuple(m[4], mask1, mask2, &key[4]);
-	get_ipv6_5tuple(m[5], mask1, mask2, &key[5]);
-	get_ipv6_5tuple(m[6], mask1, mask2, &key[6]);
-	get_ipv6_5tuple(m[7], mask1, mask2, &key[7]);
+	get_ipv6_5tuple(m[0], mask1.x, mask2.x, &key[0]);
+	get_ipv6_5tuple(m[1], mask1.x, mask2.x, &key[1]);
+	get_ipv6_5tuple(m[2], mask1.x, mask2.x, &key[2]);
+	get_ipv6_5tuple(m[3], mask1.x, mask2.x, &key[3]);
+	get_ipv6_5tuple(m[4], mask1.x, mask2.x, &key[4]);
+	get_ipv6_5tuple(m[5], mask1.x, mask2.x, &key[5]);
+	get_ipv6_5tuple(m[6], mask1.x, mask2.x, &key[6]);
+	get_ipv6_5tuple(m[7], mask1.x, mask2.x, &key[7]);
 
 	const void *key_array[8] = {&key[0], &key[1], &key[2], &key[3],
 			&key[4], &key[5], &key[6], &key[7]};
@@ -247,8 +239,13 @@ em_get_dst_port(const struct lcore_conf *qconf, struct rte_mbuf *pkt,
 	uint8_t next_hop;
 	struct ipv4_hdr *ipv4_hdr;
 	struct ipv6_hdr *ipv6_hdr;
+	uint32_t tcp_or_udp;
+	uint32_t l3_ptypes;
 
-	if (RTE_ETH_IS_IPV4_HDR(pkt->packet_type)) {
+	tcp_or_udp = pkt->packet_type & (RTE_PTYPE_L4_TCP | RTE_PTYPE_L4_UDP);
+	l3_ptypes = pkt->packet_type & RTE_PTYPE_L3_MASK;
+
+	if (tcp_or_udp && (l3_ptypes == RTE_PTYPE_L3_IPV4)) {
 
 		/* Handle IPv4 headers.*/
 		ipv4_hdr = rte_pktmbuf_mtod_offset(pkt, struct ipv4_hdr *,
@@ -263,7 +260,7 @@ em_get_dst_port(const struct lcore_conf *qconf, struct rte_mbuf *pkt,
 
 		return next_hop;
 
-	} else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
+	} else if (tcp_or_udp && (l3_ptypes == RTE_PTYPE_L3_IPV6)) {
 
 		/* Handle IPv6 headers.*/
 		ipv6_hdr = rte_pktmbuf_mtod_offset(pkt, struct ipv6_hdr *,
@@ -312,27 +309,31 @@ l3fwd_em_send_packets(int nb_rx, struct rte_mbuf **pkts_burst,
 			pkts_burst[j+6]->packet_type &
 			pkts_burst[j+7]->packet_type;
 
-		if (pkt_type & RTE_PTYPE_L3_IPV4) {
+		uint32_t l3_type = pkt_type & RTE_PTYPE_L3_MASK;
+		uint32_t tcp_or_udp = pkt_type &
+			(RTE_PTYPE_L4_TCP | RTE_PTYPE_L4_UDP);
+
+		if (tcp_or_udp && (l3_type == RTE_PTYPE_L3_IPV4)) {
 
 			em_get_dst_port_ipv4x8(qconf, &pkts_burst[j], portid, &dst_port[j]);
 
-		} else if (pkt_type & RTE_PTYPE_L3_IPV6) {
+		} else if (tcp_or_udp && (l3_type == RTE_PTYPE_L3_IPV6)) {
 
 			em_get_dst_port_ipv6x8(qconf, &pkts_burst[j], portid, &dst_port[j]);
 
 		} else {
 			dst_port[j]   = em_get_dst_port(qconf, pkts_burst[j], portid);
-			dst_port[j+1] = em_get_dst_port(qconf, pkts_burst[j], portid);
-			dst_port[j+2] = em_get_dst_port(qconf, pkts_burst[j], portid);
-			dst_port[j+3] = em_get_dst_port(qconf, pkts_burst[j], portid);
-			dst_port[j+4] = em_get_dst_port(qconf, pkts_burst[j], portid);
-			dst_port[j+5] = em_get_dst_port(qconf, pkts_burst[j], portid);
-			dst_port[j+6] = em_get_dst_port(qconf, pkts_burst[j], portid);
-			dst_port[j+7] = em_get_dst_port(qconf, pkts_burst[j], portid);
+			dst_port[j+1] = em_get_dst_port(qconf, pkts_burst[j+1], portid);
+			dst_port[j+2] = em_get_dst_port(qconf, pkts_burst[j+2], portid);
+			dst_port[j+3] = em_get_dst_port(qconf, pkts_burst[j+3], portid);
+			dst_port[j+4] = em_get_dst_port(qconf, pkts_burst[j+4], portid);
+			dst_port[j+5] = em_get_dst_port(qconf, pkts_burst[j+5], portid);
+			dst_port[j+6] = em_get_dst_port(qconf, pkts_burst[j+6], portid);
+			dst_port[j+7] = em_get_dst_port(qconf, pkts_burst[j+7], portid);
 		}
 	}
 
-	for (; j < n; j++)
+	for (; j < nb_rx; j++)
 		dst_port[j] = em_get_dst_port(qconf, pkts_burst[j], portid);
 
 	send_packets_multi(qconf, pkts_burst, dst_port, nb_rx);

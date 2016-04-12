@@ -1858,7 +1858,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 				continue;
 			}
 			/* clear all_ports_up flag if any link down */
-			if (link.link_status == 0) {
+			if (link.link_status == ETH_LINK_DOWN) {
 				all_ports_up = 0;
 				break;
 			}
@@ -1893,7 +1893,6 @@ main(int argc, char **argv)
 	unsigned lcore_id;
 	uint32_t n_tx_queue, nb_lcores;
 	uint8_t portid, nb_rx_queue, queue, socketid;
-	uint8_t nb_tx_port;
 
 	/* init EAL */
 	ret = rte_eal_init(argc, argv);
@@ -1926,7 +1925,6 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "app_acl_init failed\n");
 
 	nb_lcores = rte_lcore_count();
-	nb_tx_port = 0;
 
 	/* initialize all ports */
 	for (portid = 0; portid < nb_ports; portid++) {
@@ -2008,12 +2006,10 @@ main(int argc, char **argv)
 			qconf->tx_queue_id[portid] = queueid;
 			queueid++;
 
-			qconf->n_tx_port = nb_tx_port;
 			qconf->tx_port_id[qconf->n_tx_port] = portid;
+			qconf->n_tx_port++;
 		}
 		printf("\n");
-
-		nb_tx_port++;
 	}
 
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {

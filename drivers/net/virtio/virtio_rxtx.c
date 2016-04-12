@@ -377,7 +377,7 @@ virtio_dev_vring_start(struct virtqueue *vq, int queue_type)
 				vq->vq_ring.desc[i + mid_idx].next = i;
 				vq->vq_ring.desc[i + mid_idx].addr =
 					vq->virtio_net_hdr_mem +
-						i * vq->hw->vtnet_hdr_size;
+					offsetof(struct virtio_tx_region, tx_hdr);
 				vq->vq_ring.desc[i + mid_idx].len =
 					vq->hw->vtnet_hdr_size;
 				vq->vq_ring.desc[i + mid_idx].flags =
@@ -613,9 +613,6 @@ virtio_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 	if (likely(num > DESC_PER_CACHELINE))
 		num = num - ((rxvq->vq_used_cons_idx + num) % DESC_PER_CACHELINE);
 
-	if (num == 0)
-		return 0;
-
 	num = virtqueue_dequeue_burst_rx(rxvq, rcv_pkts, len, num);
 	PMD_RX_LOG(DEBUG, "used:%d dequeue:%d", nb_used, num);
 
@@ -712,9 +709,6 @@ virtio_recv_mergeable_pkts(void *rx_queue,
 	nb_used = VIRTQUEUE_NUSED(rxvq);
 
 	virtio_rmb();
-
-	if (nb_used == 0)
-		return 0;
 
 	PMD_RX_LOG(DEBUG, "used:%d\n", nb_used);
 

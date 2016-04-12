@@ -531,8 +531,10 @@ fm10k_dev_rss_configure(struct rte_eth_dev *dev)
 
 	if (dev->data->nb_rx_queues == 1 ||
 	    dev_conf->rxmode.mq_mode != ETH_MQ_RX_RSS ||
-	    dev_conf->rx_adv_conf.rss_conf.rss_hf == 0)
+	    dev_conf->rx_adv_conf.rss_conf.rss_hf == 0) {
+		FM10K_WRITE_REG(hw, FM10K_MRQC(0), 0);
 		return;
+	}
 
 	/* random key is rss_intel_key (default) or user provided (rss_key) */
 	if (dev_conf->rx_adv_conf.rss_conf.rss_key == NULL)
@@ -1249,7 +1251,7 @@ fm10k_link_update(struct rte_eth_dev *dev,
 	 * is no 50Gbps Ethernet. */
 	dev->data->dev_link.link_speed  = 0;
 	dev->data->dev_link.link_duplex = ETH_LINK_FULL_DUPLEX;
-	dev->data->dev_link.link_status = 1;
+	dev->data->dev_link.link_status = ETH_LINK_UP;
 
 	return 0;
 }
@@ -1410,7 +1412,60 @@ fm10k_dev_infos_get(struct rte_eth_dev *dev,
 		.nb_min = FM10K_MIN_TX_DESC,
 		.nb_align = FM10K_MULT_TX_DESC,
 	};
+
+	dev_info->speed_capa = ETH_LINK_SPEED_1G | ETH_LINK_SPEED_2_5G |
+			ETH_LINK_SPEED_10G | ETH_LINK_SPEED_25G |
+			ETH_LINK_SPEED_40G | ETH_LINK_SPEED_100G;
 }
+
+#ifdef RTE_LIBRTE_FM10K_RX_OLFLAGS_ENABLE
+static const uint32_t *
+fm10k_dev_supported_ptypes_get(struct rte_eth_dev *dev)
+{
+	if (dev->rx_pkt_burst == fm10k_recv_pkts ||
+	    dev->rx_pkt_burst == fm10k_recv_scattered_pkts) {
+		static uint32_t ptypes[] = {
+			/* refers to rx_desc_to_ol_flags() */
+			RTE_PTYPE_L2_ETHER,
+			RTE_PTYPE_L3_IPV4,
+			RTE_PTYPE_L3_IPV4_EXT,
+			RTE_PTYPE_L3_IPV6,
+			RTE_PTYPE_L3_IPV6_EXT,
+			RTE_PTYPE_L4_TCP,
+			RTE_PTYPE_L4_UDP,
+			RTE_PTYPE_UNKNOWN
+		};
+
+		return ptypes;
+	} else if (dev->rx_pkt_burst == fm10k_recv_pkts_vec ||
+		   dev->rx_pkt_burst == fm10k_recv_scattered_pkts_vec) {
+		static uint32_t ptypes_vec[] = {
+			/* refers to fm10k_desc_to_pktype_v() */
+			RTE_PTYPE_L3_IPV4,
+			RTE_PTYPE_L3_IPV4_EXT,
+			RTE_PTYPE_L3_IPV6,
+			RTE_PTYPE_L3_IPV6_EXT,
+			RTE_PTYPE_L4_TCP,
+			RTE_PTYPE_L4_UDP,
+			RTE_PTYPE_TUNNEL_GENEVE,
+			RTE_PTYPE_TUNNEL_NVGRE,
+			RTE_PTYPE_TUNNEL_VXLAN,
+			RTE_PTYPE_TUNNEL_GRE,
+			RTE_PTYPE_UNKNOWN
+		};
+
+		return ptypes_vec;
+	}
+
+	return NULL;
+}
+#else
+static const uint32_t *
+fm10k_dev_supported_ptypes_get(struct rte_eth_dev *dev __rte_unused)
+{
+	return NULL;
+}
+#endif
 
 static int
 fm10k_vlan_filter_set(struct rte_eth_dev *dev, uint16_t vlan_id, int on)
@@ -2578,6 +2633,7 @@ static const struct eth_dev_ops fm10k_eth_dev_ops = {
 	.xstats_reset		= fm10k_stats_reset,
 	.link_update		= fm10k_link_update,
 	.dev_infos_get		= fm10k_dev_infos_get,
+	.dev_supported_ptypes_get = fm10k_dev_supported_ptypes_get,
 	.vlan_filter_set	= fm10k_vlan_filter_set,
 	.vlan_offload_set	= fm10k_vlan_offload_set,
 	.mac_addr_add		= fm10k_macaddr_add,

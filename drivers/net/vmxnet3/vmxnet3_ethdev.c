@@ -86,6 +86,8 @@ static void vmxnet3_dev_stats_get(struct rte_eth_dev *dev,
 				struct rte_eth_stats *stats);
 static void vmxnet3_dev_info_get(struct rte_eth_dev *dev,
 				struct rte_eth_dev_info *dev_info);
+static const uint32_t *
+vmxnet3_dev_supported_ptypes_get(struct rte_eth_dev *dev);
 static int vmxnet3_dev_vlan_filter_set(struct rte_eth_dev *dev,
 				       uint16_t vid, int on);
 static void vmxnet3_dev_vlan_offload_set(struct rte_eth_dev *dev, int mask);
@@ -119,6 +121,7 @@ static const struct eth_dev_ops vmxnet3_eth_dev_ops = {
 	.stats_get            = vmxnet3_dev_stats_get,
 	.mac_addr_set	      = vmxnet3_mac_addr_set,
 	.dev_infos_get        = vmxnet3_dev_info_get,
+	.dev_supported_ptypes_get = vmxnet3_dev_supported_ptypes_get,
 	.vlan_filter_set      = vmxnet3_dev_vlan_filter_set,
 	.vlan_offload_set     = vmxnet3_dev_vlan_offload_set,
 	.rx_queue_setup       = vmxnet3_dev_rx_queue_setup,
@@ -706,8 +709,7 @@ vmxnet3_dev_info_get(__attribute__((unused))struct rte_eth_dev *dev,
 	dev_info->max_rx_pktlen = 16384; /* includes CRC, cf MAXFRS register */
 	dev_info->max_mac_addrs = VMXNET3_MAX_MAC_ADDRS;
 
-	dev_info->default_txconf.txq_flags = ETH_TXQ_FLAGS_NOMULTSEGS |
-						ETH_TXQ_FLAGS_NOOFFLOADS;
+	dev_info->default_txconf.txq_flags = ETH_TXQ_FLAGS_NOXSUMSCTP;
 	dev_info->flow_type_rss_offloads = VMXNET3_RSS_OFFLOAD_ALL;
 
 	dev_info->rx_desc_lim = (struct rte_eth_desc_lim) {
@@ -732,6 +734,20 @@ vmxnet3_dev_info_get(__attribute__((unused))struct rte_eth_dev *dev,
 		DEV_TX_OFFLOAD_TCP_CKSUM |
 		DEV_TX_OFFLOAD_UDP_CKSUM |
 		DEV_TX_OFFLOAD_TCP_TSO;
+}
+
+static const uint32_t *
+vmxnet3_dev_supported_ptypes_get(struct rte_eth_dev *dev)
+{
+	static const uint32_t ptypes[] = {
+		RTE_PTYPE_L3_IPV4_EXT,
+		RTE_PTYPE_L3_IPV4,
+		RTE_PTYPE_UNKNOWN
+	};
+
+	if (dev->rx_pkt_burst == vmxnet3_recv_pkts)
+		return ptypes;
+	return NULL;
 }
 
 static void
@@ -760,9 +776,10 @@ vmxnet3_dev_link_update(struct rte_eth_dev *dev, __attribute__((unused)) int wai
 	ret = VMXNET3_READ_BAR1_REG(hw, VMXNET3_REG_CMD);
 
 	if (ret & 0x1) {
-		link.link_status = 1;
+		link.link_status = ETH_LINK_UP;
 		link.link_duplex = ETH_LINK_FULL_DUPLEX;
-		link.link_speed = ETH_LINK_SPEED_10000;
+		link.link_speed = ETH_SPEED_NUM_10G;
+		link.link_autoneg = ETH_LINK_SPEED_FIXED;
 	}
 
 	vmxnet3_dev_atomic_write_link_status(dev, &link);

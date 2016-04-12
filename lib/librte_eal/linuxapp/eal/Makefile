@@ -52,6 +52,7 @@ CFLAGS += $(WERROR_FLAGS) -O3
 LDLIBS += -ldl
 LDLIBS += -lpthread
 LDLIBS += -lgcc_s
+LDLIBS += -lrt
 
 # specific to linuxapp exec-env
 SRCS-$(CONFIG_RTE_EXEC_ENV_LINUXAPP) := eal.c
@@ -101,6 +102,8 @@ SRCS-$(CONFIG_RTE_EXEC_ENV_LINUXAPP) += rte_keepalive.c
 
 # from arch dir
 SRCS-$(CONFIG_RTE_EXEC_ENV_LINUXAPP) += rte_cpuflags.c
+
+CFLAGS_eal_common_cpuflags.o := $(CPUFLAGS_LIST)
 
 CFLAGS_eal.o := -D_GNU_SOURCE
 CFLAGS_eal_interrupts.o := -D_GNU_SOURCE

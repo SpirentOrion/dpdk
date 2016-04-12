@@ -59,6 +59,7 @@
 #include <rte_ethdev.h>
 #include <rte_spinlock.h>
 #include <rte_interrupts.h>
+#include <rte_errno.h>
 #ifdef PEDANTIC
 #pragma GCC diagnostic error "-pedantic"
 #endif
@@ -102,7 +103,10 @@ struct priv {
 	unsigned int hw_csum:1; /* Checksum offload is supported. */
 	unsigned int hw_csum_l2tun:1; /* Same for L2 tunnels. */
 	unsigned int hw_vlan_strip:1; /* VLAN stripping is supported. */
+	unsigned int hw_fcs_strip:1; /* FCS stripping is supported. */
+	unsigned int hw_padding:1; /* End alignment padding is supported. */
 	unsigned int vf:1; /* This is a VF device. */
+	unsigned int mps:1; /* Whether multi-packet send is supported. */
 	unsigned int pending_alarm:1; /* An alarm is pending. */
 	/* RX/TX queues. */
 	unsigned int rxqs_n; /* RX queues array size. */
@@ -118,12 +122,21 @@ struct priv {
 	unsigned int hash_rxqs_n; /* Hash RX QPs array size. */
 	/* RSS configuration array indexed by hash RX queue type. */
 	struct rte_eth_rss_conf *(*rss_conf)[];
+	uint64_t rss_hf; /* RSS DPDK bit field of active RSS. */
 	struct rte_intr_handle intr_handle; /* Interrupt handler. */
 	unsigned int (*reta_idx)[]; /* RETA index table. */
 	unsigned int reta_idx_n; /* RETA index size. */
 	struct fdir_filter_list *fdir_filter_list; /* Flow director rules. */
 	rte_spinlock_t lock; /* Lock for control functions. */
 };
+
+/* Local storage for secondary process data. */
+struct mlx5_secondary_data {
+	struct rte_eth_dev_data data; /* Local device data. */
+	struct priv *primary_priv; /* Private structure from primary. */
+	struct rte_eth_dev_data *shared_dev_data; /* Shared device data. */
+	rte_spinlock_t lock; /* Port configuration lock. */
+} mlx5_secondary_data[RTE_MAX_ETHPORTS];
 
 /**
  * Lock private structure to protect it from concurrent access in the
@@ -150,14 +163,21 @@ priv_unlock(struct priv *priv)
 	rte_spinlock_unlock(&priv->lock);
 }
 
+/* mlx5.c */
+
+int mlx5_getenv_int(const char *);
+
 /* mlx5_ethdev.c */
 
+struct priv *mlx5_get_priv(struct rte_eth_dev *dev);
+int mlx5_is_secondary(void);
 int priv_get_ifname(const struct priv *, char (*)[IF_NAMESIZE]);
 int priv_ifreq(const struct priv *, int req, struct ifreq *);
 int priv_get_mtu(struct priv *, uint16_t *);
 int priv_set_flags(struct priv *, unsigned int, unsigned int);
 int mlx5_dev_configure(struct rte_eth_dev *);
 void mlx5_dev_infos_get(struct rte_eth_dev *, struct rte_eth_dev_info *);
+const uint32_t *mlx5_dev_supported_ptypes_get(struct rte_eth_dev *dev);
 int mlx5_link_update(struct rte_eth_dev *, int);
 int mlx5_dev_set_mtu(struct rte_eth_dev *, uint16_t);
 int mlx5_dev_get_flow_ctrl(struct rte_eth_dev *, struct rte_eth_fc_conf *);
@@ -168,6 +188,9 @@ void mlx5_dev_link_status_handler(void *);
 void mlx5_dev_interrupt_handler(struct rte_intr_handle *, void *);
 void priv_dev_interrupt_handler_uninstall(struct priv *, struct rte_eth_dev *);
 void priv_dev_interrupt_handler_install(struct priv *, struct rte_eth_dev *);
+int mlx5_set_link_down(struct rte_eth_dev *dev);
+int mlx5_set_link_up(struct rte_eth_dev *dev);
+struct priv *mlx5_secondary_data_setup(struct priv *priv);
 
 /* mlx5_mac.c */
 

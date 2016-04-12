@@ -79,10 +79,13 @@ Features
 - Support for multiple MAC addresses.
 - VLAN filtering.
 - RX VLAN stripping.
+- TX VLAN insertion.
+- RX CRC stripping configuration.
 - Promiscuous mode.
 - Multicast promiscuous mode.
 - Hardware checksum offloads.
 - Flow director (RTE_FDIR_MODE_PERFECT and RTE_FDIR_MODE_PERFECT_MAC_VLAN).
+- Secondary process TX is supported.
 
 Limitations
 -----------
@@ -91,7 +94,7 @@ Limitations
 - Inner RSS for VXLAN frames is not supported yet.
 - Port statistics through software counters only.
 - Hardware checksum offloads for VXLAN inner header are not supported yet.
-- Secondary processes are not supported yet.
+- Secondary process RX is not supported.
 
 Configuration
 -------------
@@ -148,6 +151,20 @@ Environment variables
   Since the additional software logic necessary to handle this mode can
   lower performance when there is no backpressure, it is not enabled by
   default.
+
+- ``MLX5_PMD_ENABLE_PADDING``
+
+  Enables HW packet padding in PCI bus transactions.
+
+  When packet size is cache aligned and CRC stripping is enabled, 4 fewer
+  bytes are written to the PCI bus. Enabling padding makes such packets
+  aligned again.
+
+  In cases where PCI bandwidth is the bottleneck, padding can improve
+  performance by 10%.
+
+  This is disabled by default since this can also decrease performance for
+  unaligned packet sizes.
 
 Run-time configuration
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -226,6 +243,8 @@ Currently supported by DPDK:
 
     - Flow director.
     - RX VLAN stripping.
+    - TX VLAN insertion.
+    - RX CRC stripping configuration.
 
 - Minimum firmware version:
 

@@ -1036,6 +1036,7 @@ eth_dev_info(struct rte_eth_dev *dev,
 	dev_info->max_rx_queues = internals->max_rx_queues;
 	dev_info->max_tx_queues = internals->max_tx_queues;
 	dev_info->min_rx_bufsize = 0;
+	dev_info->speed_capa = ETH_LINK_SPEED_100G;
 }
 
 static void
@@ -1149,22 +1150,16 @@ eth_link_update(struct rte_eth_dev *dev,
 
 	switch (cgmii_link_speed(ibuf)) {
 	case SZEDATA2_LINK_SPEED_10G:
-		link.link_speed = ETH_LINK_SPEED_10G;
+		link.link_speed = ETH_SPEED_NUM_10G;
 		break;
 	case SZEDATA2_LINK_SPEED_40G:
-		link.link_speed = ETH_LINK_SPEED_40G;
+		link.link_speed = ETH_SPEED_NUM_40G;
 		break;
 	case SZEDATA2_LINK_SPEED_100G:
-		/*
-		 * TODO
-		 * If link_speed value from rte_eth_link structure
-		 * will be changed to support 100Gbps speed change
-		 * this value to 100G.
-		 */
-		link.link_speed = ETH_LINK_SPEED_10G;
+		link.link_speed = ETH_SPEED_NUM_100G;
 		break;
 	default:
-		link.link_speed = ETH_LINK_SPEED_10G;
+		link.link_speed = ETH_SPEED_NUM_10G;
 		break;
 	}
 
@@ -1172,7 +1167,9 @@ eth_link_update(struct rte_eth_dev *dev,
 	link.link_duplex = ETH_LINK_FULL_DUPLEX;
 
 	link.link_status = (cgmii_ibuf_is_enabled(ibuf) &&
-			cgmii_ibuf_is_link_up(ibuf)) ? 1 : 0;
+			cgmii_ibuf_is_link_up(ibuf)) ? ETH_LINK_UP : ETH_LINK_DOWN;
+
+	link.link_autoneg = ETH_LINK_SPEED_FIXED;
 
 	rte_atomic64_cmpset((uint64_t *)dev_link, *(uint64_t *)dev_link,
 			*(uint64_t *)link_ptr);
@@ -1317,30 +1314,30 @@ eth_allmulticast_disable(struct rte_eth_dev *dev)
 	cgmii_ibuf_mac_mode_write(ibuf, SZEDATA2_MAC_CHMODE_ONLY_VALID);
 }
 
-static struct eth_dev_ops ops = {
-		.dev_start          = eth_dev_start,
-		.dev_stop           = eth_dev_stop,
-		.dev_set_link_up    = eth_dev_set_link_up,
-		.dev_set_link_down  = eth_dev_set_link_down,
-		.dev_close          = eth_dev_close,
-		.dev_configure      = eth_dev_configure,
-		.dev_infos_get      = eth_dev_info,
-		.promiscuous_enable   = eth_promiscuous_enable,
-		.promiscuous_disable  = eth_promiscuous_disable,
-		.allmulticast_enable  = eth_allmulticast_enable,
-		.allmulticast_disable = eth_allmulticast_disable,
-		.rx_queue_start     = eth_rx_queue_start,
-		.rx_queue_stop      = eth_rx_queue_stop,
-		.tx_queue_start     = eth_tx_queue_start,
-		.tx_queue_stop      = eth_tx_queue_stop,
-		.rx_queue_setup     = eth_rx_queue_setup,
-		.tx_queue_setup     = eth_tx_queue_setup,
-		.rx_queue_release   = eth_rx_queue_release,
-		.tx_queue_release   = eth_tx_queue_release,
-		.link_update        = eth_link_update,
-		.stats_get          = eth_stats_get,
-		.stats_reset        = eth_stats_reset,
-		.mac_addr_set       = eth_mac_addr_set,
+static const struct eth_dev_ops ops = {
+	.dev_start          = eth_dev_start,
+	.dev_stop           = eth_dev_stop,
+	.dev_set_link_up    = eth_dev_set_link_up,
+	.dev_set_link_down  = eth_dev_set_link_down,
+	.dev_close          = eth_dev_close,
+	.dev_configure      = eth_dev_configure,
+	.dev_infos_get      = eth_dev_info,
+	.promiscuous_enable   = eth_promiscuous_enable,
+	.promiscuous_disable  = eth_promiscuous_disable,
+	.allmulticast_enable  = eth_allmulticast_enable,
+	.allmulticast_disable = eth_allmulticast_disable,
+	.rx_queue_start     = eth_rx_queue_start,
+	.rx_queue_stop      = eth_rx_queue_stop,
+	.tx_queue_start     = eth_tx_queue_start,
+	.tx_queue_stop      = eth_tx_queue_stop,
+	.rx_queue_setup     = eth_rx_queue_setup,
+	.tx_queue_setup     = eth_tx_queue_setup,
+	.rx_queue_release   = eth_rx_queue_release,
+	.tx_queue_release   = eth_tx_queue_release,
+	.link_update        = eth_link_update,
+	.stats_get          = eth_stats_get,
+	.stats_reset        = eth_stats_reset,
+	.mac_addr_set       = eth_mac_addr_set,
 };
 
 /*

@@ -71,9 +71,9 @@
 static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 	{	/* SHA1 HMAC */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,
-			.auth = {
+			{.auth = {
 				.algo = RTE_CRYPTO_AUTH_SHA1_HMAC,
 				.block_size = 64,
 				.key_size = {
@@ -87,14 +87,14 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.increment = 0
 				},
 				.aad_size = { 0 }
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* SHA256 HMAC */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,
-			.auth = {
+			{.auth = {
 				.algo = RTE_CRYPTO_AUTH_SHA256_HMAC,
 				.block_size = 64,
 				.key_size = {
@@ -108,14 +108,14 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.increment = 0
 				},
 				.aad_size = { 0 }
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* SHA512 HMAC */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,
-			.auth = {
+			{.auth = {
 				.algo = RTE_CRYPTO_AUTH_SHA512_HMAC,
 				.block_size = 128,
 				.key_size = {
@@ -129,14 +129,14 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.increment = 0
 				},
 				.aad_size = { 0 }
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* AES XCBC MAC */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,
-			.auth = {
+			{.auth = {
 				.algo = RTE_CRYPTO_AUTH_AES_XCBC_MAC,
 				.block_size = 16,
 				.key_size = {
@@ -150,14 +150,14 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.increment = 0
 				},
 				.aad_size = { 0 }
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* AES GCM (AUTH) */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,
-			.auth = {
+			{.auth = {
 				.algo = RTE_CRYPTO_AUTH_AES_GCM,
 				.block_size = 16,
 				.key_size = {
@@ -175,14 +175,14 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.max = 12,
 					.increment = 4
 				}
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* SNOW3G (UIA2) */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,
-			.auth = {
+			{.auth = {
 				.algo = RTE_CRYPTO_AUTH_SNOW3G_UIA2,
 				.block_size = 16,
 				.key_size = {
@@ -200,14 +200,14 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.max = 16,
 					.increment = 0
 				}
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* AES GCM (CIPHER) */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_CIPHER,
-			.cipher = {
+			{.cipher = {
 				.algo = RTE_CRYPTO_CIPHER_AES_GCM,
 				.block_size = 16,
 				.key_size = {
@@ -220,15 +220,15 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.max = 16,
 					.increment = 0
 				}
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* AES CBC */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_CIPHER,
-			.cipher = {
-				RTE_CRYPTO_CIPHER_AES_CBC,
+			{.cipher = {
+				.algo = RTE_CRYPTO_CIPHER_AES_CBC,
 				.block_size = 16,
 				.key_size = {
 					.min = 16,
@@ -240,14 +240,14 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.max = 16,
 					.increment = 0
 				}
-			}
-		}
+			}, }
+		}, }
 	},
 	{	/* SNOW3G (UEA2) */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
-		.sym = {
+		{.sym = {
 			.xform_type = RTE_CRYPTO_SYM_XFORM_CIPHER,
-			.cipher = {
+			{.cipher = {
 				.algo = RTE_CRYPTO_CIPHER_SNOW3G_UEA2,
 				.block_size = 16,
 				.key_size = {
@@ -260,8 +260,8 @@ static const struct rte_cryptodev_capabilities qat_pmd_capabilities[] = {
 					.max = 16,
 					.increment = 0
 				}
-			}
-		}
+			}, }
+		}, }
 	},
 	RTE_CRYPTODEV_END_OF_CAPABILITIES_LIST()
 };
@@ -570,6 +570,9 @@ qat_pmd_enqueue_op_burst(void *qp, struct rte_crypto_op **ops,
 	register uint32_t tail;
 	int overflow;
 
+	if (unlikely(nb_ops == 0))
+		return 0;
+
 	/* read params used a lot in main loop into registers */
 	queue = &(tmp_qp->tx_q);
 	base_addr = (uint8_t *)queue->base_addr;
@@ -673,13 +676,13 @@ qat_write_hw_desc_entry(struct rte_crypto_op *op, uint8_t *out_msg)
 		return -EINVAL;
 	}
 #endif
-	if (unlikely(op->sym->type == RTE_CRYPTO_SYM_OP_SESSIONLESS)) {
+	if (unlikely(op->sym->sess_type == RTE_CRYPTO_SYM_OP_SESSIONLESS)) {
 		PMD_DRV_LOG(ERR, "QAT PMD only supports session oriented"
 				" requests, op (%p) is sessionless.", op);
 		return -EINVAL;
 	}
 
-	if (unlikely(op->sym->session->type != RTE_CRYPTODEV_QAT_SYM_PMD)) {
+	if (unlikely(op->sym->session->dev_type != RTE_CRYPTODEV_QAT_SYM_PMD)) {
 		PMD_DRV_LOG(ERR, "Session was not created for this device");
 		return -EINVAL;
 	}
@@ -689,17 +692,21 @@ qat_write_hw_desc_entry(struct rte_crypto_op *op, uint8_t *out_msg)
 	*qat_req = ctx->fw_req;
 	qat_req->comn_mid.opaque_data = (uint64_t)(uintptr_t)op;
 
-	/*
-	 * The following code assumes:
-	 * - single entry buffer.
-	 * - always in place.
-	 */
 	qat_req->comn_mid.dst_length =
-			qat_req->comn_mid.src_length =
-					rte_pktmbuf_data_len(op->sym->m_src);
+		qat_req->comn_mid.src_length =
+				rte_pktmbuf_data_len(op->sym->m_src);
+
 	qat_req->comn_mid.dest_data_addr =
-			qat_req->comn_mid.src_data_addr =
-					rte_pktmbuf_mtophys(op->sym->m_src);
+		qat_req->comn_mid.src_data_addr =
+			    rte_pktmbuf_mtophys(op->sym->m_src);
+
+	if (unlikely(op->sym->m_dst != NULL)) {
+		qat_req->comn_mid.dest_data_addr =
+				rte_pktmbuf_mtophys(op->sym->m_dst);
+		qat_req->comn_mid.dst_length =
+				rte_pktmbuf_data_len(op->sym->m_dst);
+	}
+
 	cipher_param = (void *)&qat_req->serv_specif_rqpars;
 	auth_param = (void *)((uint8_t *)cipher_param + sizeof(*cipher_param));
 

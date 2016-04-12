@@ -242,26 +242,59 @@ struct rte_eth_stats {
 };
 
 /**
+ * Device supported speeds bitmap flags
+ */
+#define ETH_LINK_SPEED_AUTONEG  (0 <<  0)  /**< Autonegotiate (all speeds) */
+#define ETH_LINK_SPEED_FIXED    (1 <<  0)  /**< Disable autoneg (fixed speed) */
+#define ETH_LINK_SPEED_10M_HD   (1 <<  1)  /**<  10 Mbps half-duplex */
+#define ETH_LINK_SPEED_10M      (1 <<  2)  /**<  10 Mbps full-duplex */
+#define ETH_LINK_SPEED_100M_HD  (1 <<  3)  /**< 100 Mbps half-duplex */
+#define ETH_LINK_SPEED_100M     (1 <<  4)  /**< 100 Mbps full-duplex */
+#define ETH_LINK_SPEED_1G       (1 <<  5)  /**<   1 Gbps */
+#define ETH_LINK_SPEED_2_5G     (1 <<  6)  /**< 2.5 Gbps */
+#define ETH_LINK_SPEED_5G       (1 <<  7)  /**<   5 Gbps */
+#define ETH_LINK_SPEED_10G      (1 <<  8)  /**<  10 Gbps */
+#define ETH_LINK_SPEED_20G      (1 <<  9)  /**<  20 Gbps */
+#define ETH_LINK_SPEED_25G      (1 << 10)  /**<  25 Gbps */
+#define ETH_LINK_SPEED_40G      (1 << 11)  /**<  40 Gbps */
+#define ETH_LINK_SPEED_50G      (1 << 12)  /**<  50 Gbps */
+#define ETH_LINK_SPEED_56G      (1 << 13)  /**<  56 Gbps */
+#define ETH_LINK_SPEED_100G     (1 << 14)  /**< 100 Gbps */
+
+/**
+ * Ethernet numeric link speeds in Mbps
+ */
+#define ETH_SPEED_NUM_NONE         0 /**< Not defined */
+#define ETH_SPEED_NUM_10M         10 /**<  10 Mbps */
+#define ETH_SPEED_NUM_100M       100 /**< 100 Mbps */
+#define ETH_SPEED_NUM_1G        1000 /**<   1 Gbps */
+#define ETH_SPEED_NUM_2_5G      2500 /**< 2.5 Gbps */
+#define ETH_SPEED_NUM_5G        5000 /**<   5 Gbps */
+#define ETH_SPEED_NUM_10G      10000 /**<  10 Gbps */
+#define ETH_SPEED_NUM_20G      20000 /**<  20 Gbps */
+#define ETH_SPEED_NUM_25G      25000 /**<  25 Gbps */
+#define ETH_SPEED_NUM_40G      40000 /**<  40 Gbps */
+#define ETH_SPEED_NUM_50G      50000 /**<  50 Gbps */
+#define ETH_SPEED_NUM_56G      56000 /**<  56 Gbps */
+#define ETH_SPEED_NUM_100G    100000 /**< 100 Gbps */
+
+/**
  * A structure used to retrieve link-level information of an Ethernet port.
  */
 struct rte_eth_link {
-	uint16_t link_speed;      /**< ETH_LINK_SPEED_[10, 100, 1000, 10000] */
-	uint16_t link_duplex;     /**< ETH_LINK_[HALF_DUPLEX, FULL_DUPLEX] */
-	uint8_t  link_status : 1; /**< 1 -> link up, 0 -> link down */
-}__attribute__((aligned(8)));     /**< aligned for atomic64 read/write */
+	uint32_t link_speed;        /**< ETH_SPEED_NUM_ */
+	uint16_t link_duplex  : 1;  /**< ETH_LINK_[HALF/FULL]_DUPLEX */
+	uint16_t link_autoneg : 1;  /**< ETH_LINK_SPEED_[AUTONEG/FIXED] */
+	uint16_t link_status  : 1;  /**< ETH_LINK_[DOWN/UP] */
+} __attribute__((aligned(8)));      /**< aligned for atomic64 read/write */
 
-#define ETH_LINK_SPEED_AUTONEG  0       /**< Auto-negotiate link speed. */
-#define ETH_LINK_SPEED_10       10      /**< 10 megabits/second. */
-#define ETH_LINK_SPEED_100      100     /**< 100 megabits/second. */
-#define ETH_LINK_SPEED_1000     1000    /**< 1 gigabits/second. */
-#define ETH_LINK_SPEED_10000    10000   /**< 10 gigabits/second. */
-#define ETH_LINK_SPEED_10G      10000   /**< alias of 10 gigabits/second. */
-#define ETH_LINK_SPEED_20G      20000   /**< 20 gigabits/second. */
-#define ETH_LINK_SPEED_40G      40000   /**< 40 gigabits/second. */
-
-#define ETH_LINK_AUTONEG_DUPLEX 0       /**< Auto-negotiate duplex. */
-#define ETH_LINK_HALF_DUPLEX    1       /**< Half-duplex connection. */
-#define ETH_LINK_FULL_DUPLEX    2       /**< Full-duplex connection. */
+/* Utility constants */
+#define ETH_LINK_HALF_DUPLEX    0 /**< Half-duplex connection. */
+#define ETH_LINK_FULL_DUPLEX    1 /**< Full-duplex connection. */
+#define ETH_LINK_DOWN           0 /**< Link is down. */
+#define ETH_LINK_UP             1 /**< Link is up. */
+#define ETH_LINK_FIXED          0 /**< No autonegotiation. */
+#define ETH_LINK_AUTONEG        1 /**< Autonegotiated. */
 
 /**
  * A structure used to configure the ring threshold registers of an RX/TX
@@ -775,10 +808,13 @@ struct rte_intr_conf {
  * configuration settings may be needed.
  */
 struct rte_eth_conf {
-	uint16_t link_speed;
-	/**< ETH_LINK_SPEED_10[0|00|000], or 0 for autonegotation */
-	uint16_t link_duplex;
-	/**< ETH_LINK_[HALF_DUPLEX|FULL_DUPLEX], or 0 for autonegotation */
+	uint32_t link_speeds; /**< bitmap of ETH_LINK_SPEED_XXX of speeds to be
+				used. ETH_LINK_SPEED_FIXED disables link
+				autonegotiation, and a unique speed shall be
+				set. Otherwise, the bitmap defines the set of
+				speeds to be advertised. If the special value
+				ETH_LINK_SPEED_AUTONEG (0) is used, all speeds
+				supported are advertised. */
 	struct rte_eth_rxmode rxmode; /**< Port RX configuration. */
 	struct rte_eth_txmode txmode; /**< Port TX configuration. */
 	uint32_t lpbk_mode; /**< Loopback operation mode. By default the value
@@ -840,6 +876,9 @@ struct rte_eth_conf {
 #define DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM 0x00000080 /**< Used for tunneling packet. */
 #define DEV_TX_OFFLOAD_QINQ_INSERT 0x00000100
 
+/**
+ * Ethernet device information
+ */
 struct rte_eth_dev_info {
 	struct rte_pci_device *pci_dev; /**< Device PCI information. */
 	const char *driver_name; /**< Device Driver name. */
@@ -868,6 +907,7 @@ struct rte_eth_dev_info {
 	uint16_t vmdq_pool_base;  /**< First ID of VMDQ pools. */
 	struct rte_eth_desc_lim rx_desc_lim;  /**< RX descriptors limits */
 	struct rte_eth_desc_lim tx_desc_lim;  /**< TX descriptors limits */
+	uint32_t speed_capa;  /**< Supported speeds bitmap (ETH_LINK_SPEED_). */
 };
 
 /**
@@ -1049,6 +1089,9 @@ typedef int (*eth_queue_stats_mapping_set_t)(struct rte_eth_dev *dev,
 typedef void (*eth_dev_infos_get_t)(struct rte_eth_dev *dev,
 				    struct rte_eth_dev_info *dev_info);
 /**< @internal Get specific informations of an Ethernet device. */
+
+typedef const uint32_t *(*eth_dev_supported_ptypes_get_t)(struct rte_eth_dev *dev);
+/**< @internal Get supported ptypes of an Ethernet device. */
 
 typedef int (*eth_queue_start_t)(struct rte_eth_dev *dev,
 				    uint16_t queue_id);
@@ -1387,6 +1430,8 @@ struct eth_dev_ops {
 	eth_queue_stats_mapping_set_t queue_stats_mapping_set;
 	/**< Configure per queue stat counter mapping. */
 	eth_dev_infos_get_t        dev_infos_get; /**< Get device info. */
+	eth_dev_supported_ptypes_get_t dev_supported_ptypes_get;
+	/**< Get packet types supported and identified by device*/
 	mtu_set_t                  mtu_set; /**< Set MTU. */
 	vlan_filter_set_t          vlan_filter_set;  /**< Filter VLAN Setup. */
 	vlan_tpid_set_t            vlan_tpid_set;      /**< Outer VLAN TPID Setup. */
@@ -1833,6 +1878,19 @@ struct eth_driver {
  *   the Ethernet driver.
  */
 void rte_eth_driver_register(struct eth_driver *eth_drv);
+
+/**
+ * Convert a numerical speed in Mbps to a bitmap flag that can be used in
+ * the bitmap link_speeds of the struct rte_eth_conf
+ *
+ * @param speed
+ *   Numerical speed value in Mbps
+ * @param duplex
+ *   ETH_LINK_[HALF/FULL]_DUPLEX (only for 10/100M speeds)
+ * @return
+ *   0 if the speed cannot be mapped
+ */
+uint32_t rte_eth_speed_bitflag(uint32_t speed, int duplex);
 
 /**
  * Configure an Ethernet device.
@@ -2314,6 +2372,32 @@ void rte_eth_macaddr_get(uint8_t port_id, struct ether_addr *mac_addr);
  *   the contextual information of the Ethernet device.
  */
 void rte_eth_dev_info_get(uint8_t port_id, struct rte_eth_dev_info *dev_info);
+
+/**
+ * Retrieve the supported packet types of an Ethernet device.
+ *
+ * @note
+ *   Better to invoke this API after the device is already started or rx burst
+ *   function is decided, to obtain correct supported ptypes.
+ * @note
+ *   if a given PMD does not report what ptypes it supports, then the supported
+ *   ptype count is reported as 0.
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param ptype_mask
+ *   A hint of what kind of packet type which the caller is interested in.
+ * @param ptypes
+ *   An array pointer to store adequent packet types, allocated by caller.
+ * @param num
+ *  Size of the array pointed by param ptypes.
+ * @return
+ *   - (>=0) Number of supported ptypes. If the number of types exceeds num,
+ *           only num entries will be filled into the ptypes array, but the full
+ *           count of supported ptypes will be returned.
+ *   - (-ENODEV) if *port_id* invalid.
+ */
+int rte_eth_dev_get_supported_ptypes(uint8_t port_id, uint32_t ptype_mask,
+				     uint32_t *ptypes, int num);
 
 /**
  * Retrieve the MTU of an Ethernet device.
@@ -2917,6 +3001,10 @@ rte_eth_tx_buffer_count_callback(struct rte_mbuf **pkts, uint16_t unsent,
 enum rte_eth_event_type {
 	RTE_ETH_EVENT_UNKNOWN,  /**< unknown event type */
 	RTE_ETH_EVENT_INTR_LSC, /**< lsc interrupt event */
+	RTE_ETH_EVENT_QUEUE_STATE,
+				/**< queue state event (enabled/disabled) */
+	RTE_ETH_EVENT_INTR_RESET,
+			/**< reset interrupt event, sent to VF on PF reset */
 	RTE_ETH_EVENT_MAX       /**< max value of this enum */
 };
 

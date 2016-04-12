@@ -119,11 +119,13 @@ DPDK_2.2 {
 DPDK_16.04 {
 	global:
 
+	rte_eth_dev_get_supported_ptypes;
 	rte_eth_dev_l2_tunnel_eth_type_conf;
 	rte_eth_dev_l2_tunnel_offload_set;
 	rte_eth_dev_set_vlan_ether_type;
 	rte_eth_dev_udp_tunnel_port_add;
 	rte_eth_dev_udp_tunnel_port_delete;
+	rte_eth_speed_bitflag;
 	rte_eth_tx_buffer_count_callback;
 	rte_eth_tx_buffer_drop_callback;
 	rte_eth_tx_buffer_init;

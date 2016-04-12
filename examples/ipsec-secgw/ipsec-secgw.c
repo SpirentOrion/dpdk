@@ -36,6 +36,8 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <sys/types.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
 #include <string.h>
 #include <sys/queue.h>
 #include <stdarg.h>
@@ -945,7 +947,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 				continue;
 			}
 			/* clear all_ports_up flag if any link down */
-			if (link.link_status == 0) {
+			if (link.link_status == ETH_LINK_DOWN) {
 				all_ports_up = 0;
 				break;
 			}

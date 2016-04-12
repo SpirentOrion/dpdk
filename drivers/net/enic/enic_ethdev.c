@@ -174,6 +174,13 @@ static int enicpmd_dev_tx_queue_setup(struct rte_eth_dev *eth_dev,
 	struct enic *enic = pmd_priv(eth_dev);
 
 	ENICPMD_FUNC_TRACE();
+	if (queue_idx >= ENIC_WQ_MAX) {
+		dev_err(enic,
+			"Max number of TX queues exceeded.  Max is %d\n",
+			ENIC_WQ_MAX);
+		return -EINVAL;
+	}
+
 	eth_dev->data->tx_queues[queue_idx] = (void *)&enic->wq[queue_idx];
 
 	ret = enic_alloc_wq(enic, queue_idx, socket_id, nb_desc);
@@ -262,6 +269,13 @@ static int enicpmd_dev_rx_queue_setup(struct rte_eth_dev *eth_dev,
 	struct enic *enic = pmd_priv(eth_dev);
 
 	ENICPMD_FUNC_TRACE();
+	if (queue_idx >= ENIC_RQ_MAX) {
+		dev_err(enic,
+			"Max number of RX queues exceeded.  Max is %d\n",
+			ENIC_RQ_MAX);
+		return -EINVAL;
+	}
+
 	eth_dev->data->rx_queues[queue_idx] = (void *)&enic->rq[queue_idx];
 
 	ret = enic_alloc_rq(enic, queue_idx, socket_id, mp, nb_desc);
@@ -438,6 +452,19 @@ static void enicpmd_dev_info_get(struct rte_eth_dev *eth_dev,
 	};
 }
 
+static const uint32_t *enicpmd_dev_supported_ptypes_get(struct rte_eth_dev *dev)
+{
+	static const uint32_t ptypes[] = {
+		RTE_PTYPE_L3_IPV4,
+		RTE_PTYPE_L3_IPV6,
+		RTE_PTYPE_UNKNOWN
+	};
+
+	if (dev->rx_pkt_burst == enic_recv_pkts)
+		return ptypes;
+	return NULL;
+}
+
 static void enicpmd_dev_promiscuous_enable(struct rte_eth_dev *eth_dev)
 {
 	struct enic *enic = pmd_priv(eth_dev);
@@ -496,7 +523,7 @@ static void enicpmd_remove_mac_addr(struct rte_eth_dev *eth_dev, __rte_unused ui
 static uint16_t enicpmd_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 	uint16_t nb_pkts)
 {
-	unsigned int index;
+	uint16_t index;
 	unsigned int frags;
 	unsigned int pkt_len;
 	unsigned int seg_len;
@@ -508,6 +535,7 @@ static uint16_t enicpmd_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 	unsigned short vlan_id;
 	unsigned short ol_flags;
 	uint8_t last_seg, eop;
+	unsigned int host_tx_descs = 0;
 
 	for (index = 0; index < nb_pkts; index++) {
 		tx_pkt = *tx_pkts++;
@@ -523,6 +551,7 @@ static uint16_t enicpmd_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 				return index;
 			}
 		}
+
 		pkt_len = tx_pkt->pkt_len;
 		vlan_id = tx_pkt->vlan_tci;
 		ol_flags = tx_pkt->ol_flags;
@@ -532,9 +561,19 @@ static uint16_t enicpmd_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 			next_tx_pkt = tx_pkt->next;
 			seg_len = tx_pkt->data_len;
 			inc_len += seg_len;
-			eop = (pkt_len == inc_len) || (!next_tx_pkt);
-			last_seg = eop &&
-				(index == ((unsigned int)nb_pkts - 1));
+
+			host_tx_descs++;
+			last_seg = 0;
+			eop = 0;
+			if ((pkt_len == inc_len) || !next_tx_pkt) {
+				eop = 1;
+				/* post if last packet in batch or > thresh */
+				if ((index == (nb_pkts - 1)) ||
+				   (host_tx_descs > ENIC_TX_POST_THRESH)) {
+					last_seg = 1;
+					host_tx_descs = 0;
+				}
+			}
 			enic_send_pkt(enic, wq, tx_pkt, (unsigned short)seg_len,
 				      !frags, eop, last_seg, ol_flags, vlan_id);
 			tx_pkt = next_tx_pkt;
@@ -561,6 +600,7 @@ static const struct eth_dev_ops enicpmd_eth_dev_ops = {
 	.stats_reset          = enicpmd_dev_stats_reset,
 	.queue_stats_mapping_set = NULL,
 	.dev_infos_get        = enicpmd_dev_info_get,
+	.dev_supported_ptypes_get = enicpmd_dev_supported_ptypes_get,
 	.mtu_set              = NULL,
 	.vlan_filter_set      = enicpmd_vlan_filter_set,
 	.vlan_tpid_set        = NULL,

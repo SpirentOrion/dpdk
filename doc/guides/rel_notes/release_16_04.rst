@@ -2,38 +2,8 @@ DPDK Release 16.04
 ==================
 
 
-**Read this first**
-
-The text below explains how to update the release notes.
-
-Use proper spelling, capitalization and punctuation in all sections.
-
-Variable and config names should be quoted as fixed width text: ``LIKE_THIS``.
-
-Build the docs and view the output file to ensure the changes are correct::
-
-   make doc-guides-html
-
-   firefox build/doc/html/guides/rel_notes/release_16_04.html
-
-
 New Features
 ------------
-
-This section should contain new features added in this release. Sample format:
-
-* **Add a title in the past tense with a full stop.**
-
-  Add a short 1-2 sentence description in the past tense. The description
-  should be enough to allow someone scanning the release notes to understand
-  the new feature.
-
-  If the feature adds a lot of sub-features you can use a bullet list like this.
-
-  * Added feature foo to do something.
-  * Enhanced feature bar to do something else.
-
-  Refer to the previous release notes for examples.
 
 * **Added function to check primary process state.**
 
@@ -45,120 +15,145 @@ This section should contain new features added in this release. Sample format:
 * **Enabled bulk allocation of mbufs.**
 
   A new function ``rte_pktmbuf_alloc_bulk()`` has been added to allow the user
-  to allocate a bulk of mbufs.
+  to bulk allocate mbufs.
 
-* **Restored vmxnet3 Tx data ring.**
+* **Added device link speed capabilities.**
 
-  Tx data ring has been shown to improve small pkt forwarding performance
-  on vSphere environment.
+  The structure ``rte_eth_dev_info`` now has a ``speed_capa`` bitmap, which
+  allows the application to determine the supported speeds of each device.
 
-* **Added vmxnet3 Tx L4 checksum offload.**
+* **Added bitmap of link speeds to advertise.**
 
-  Support TCP/UDP checksum offload.
+  Added a feature to allow the definition of a set of advertised speeds for auto-negotiation,
+  explicitly disabling link auto-negotiation (single speed)
+  and full auto-negotiation.
+
+* **Added new poll-mode driver for Amazon Elastic Network Adapters (ENA).**
+
+  The driver operates for a variety of ENA adapters through feature negotiation
+  with the adapter and upgradable commands set.
+  The ENA driver handles PCI Physical and Virtual ENA functions.
+
+* **Restored vmxnet3 TX data ring.**
+
+  TX data ring has been shown to improve small packet forwarding performance
+  on the vSphere environment.
+
+* **Added vmxnet3 TX L4 checksum offload.**
+
+  Added support for TCP/UDP checksum offload to vmxnet3.
 
 * **Added vmxnet3 TSO support.**
+
+  Added support for TSO to vmxnet3.
 
 * **Added vmxnet3 support for jumbo frames.**
 
   Added support for linking multi-segment buffers together to
   handle Jumbo packets.
 
-* **Virtio 1.0.**
+* **Enabled Virtio 1.0 support.**
 
-  Enabled virtio 1.0 support for virtio pmd driver.
+  Enabled Virtio 1.0 support for Virtio pmd driver.
 
-* **Supported virtio for ARM.**
+* **Supported Virtio for ARM.**
 
-  Enabled virtio support for armv7/v8. Tested for arm64.
-  Virtio for arm support VFIO-noiommu mode only.
-  Virtio can work with other non-x86 arch too like powerpc.
+  Enabled Virtio support for ARMv7/v8. Tested for ARM64.
+  Virtio for ARM supports VFIO-noiommu mode only.
+  Virtio can work with other non-x86 architectures as well, like PowerPC.
 
-* **Supported virtio offload in vhost-user.**
+* **Supported Virtio offload in vhost-user.**
 
-  Add the offload and negotiation of checksum and TSO between vhost-user and
-  vanilla Linux virtio guest.
+  Added the offload and negotiation of checksum and TSO between vhost-user and
+  vanilla Linux Virtio guest.
 
 * **Added vhost-user live migration support.**
 
+* **Added vhost driver.**
+
+  Added a virtual PMD that wraps ``librte_vhost``.
+
 * **Added multicast promiscuous mode support on VF for ixgbe.**
 
-  Added multicast promiscuous mode support on ixgbe VF driver. So all the VFs
+  Added multicast promiscuous mode support for the ixgbe VF driver so all VFs
   can receive the multicast packets.
 
-  Please note if we want to use this promiscuous mode, we need both PF and VF
-  driver to support it. The reason is this VF feature is configured on PF.
-  If use kernel PF driver + dpdk VF driver, make sure kernel PF driver support
-  VF multicast promiscuous mode. If use dpdk PF + dpdk VF, better make sure PF
-  driver is the same version as VF.
+  Please note if you want to use this promiscuous mode, you need both PF and VF
+  driver to support it. The reason is that this VF feature is configured in the PF.
+  If you use kernel PF driver and the dpdk VF driver, make sure the kernel PF driver supports
+  VF multicast promiscuous mode. If you use dpdk PF and  dpdk VF ensure the PF
+  driver is the same version as the VF.
 
 * **Added support for E-tag on X550.**
 
-  E-tag is defined in 802.1br. Please reference
-  http://www.ieee802.org/1/pages/802.1br.html.
+  E-tag is defined in `802.1BR - Bridge Port Extension <http://www.ieee802.org/1/pages/802.1br.html>`_.
 
-  This feature is for VF, but the settings are on PF. It means
-  the CLIs should be used on PF, but some of their effects will be shown on VF.
-  The forwarding of E-tag packets based on GRP and E-CID_base will have effect
-  on PF. Theoretically the E-tag packets can be forwarded to any pool/queue.
-  But normally we'd like to forward the packets to the pools/queues belonging
-  to the VFs. And E-tag insertion and stripping will have effect on VFs. When
-  VF receives E-tag packets, it should strip the E-tag. When VF transmits
-  packets, it should insert the E-tag. Both can be offloaded.
+  This feature is for the VF, but the settings are on the PF. It means
+  the CLIs should be used on the PF, but some of their effects will be shown on the VF.
+  The forwarding of E-tag packets based on GRP and E-CID_base will have an effect
+  on the PF. Theoretically, the E-tag packets can be forwarded to any pool/queue
+  but normally we'd like to forward the packets to the pools/queues belonging
+  to the VFs. And E-tag insertion and stripping will have an effect on VFs. When
+  a VF receives E-tag packets it should strip the E-tag. When the VF transmits
+  packets, it should insert the E-tag. Both actions can be offloaded.
 
   When we want to use this E-tag support feature, the forwarding should be
-  enabled to forward the packets received by PF to indicated VFs. And insertion
-  and stripping should be enabled for VFs to offload the effort to HW.
+  enabled to forward the packets received by the PF to the indicated VFs. And insertion
+  and stripping should be enabled for VFs to offload the effort to hardware.
+
+  Features added:
 
   * Support E-tag offloading of insertion and stripping.
   * Support Forwarding E-tag packets to pools based on
     GRP and E-CID_base.
 
-* **Added support for VxLAN & NVGRE checksum off-load on X550.**
+* **Added support for VxLAN and NVGRE checksum off-load on X550.**
 
-  * Added support for VxLAN & NVGRE RX/TX checksum off-load on
+  * Added support for VxLAN and NVGRE RX/TX checksum off-load on
     X550. RX/TX checksum off-load is provided on both inner and
     outer IP header and TCP header.
   * Added functions to support VxLAN port configuration. The
     default VxLAN port number is 4789 but this can be updated
     programmatically.
 
-* **Added new X550EM_a devices.**
+* **Added support for new X550EM_a devices.**
 
-  Added new X550EM_a devices and their mac types, X550EM_a and X550EM_a_vf.
-  Updated the code to use the new devices and mac types.
+  Added support for new X550EM_a devices and their MAC types, X550EM_a and X550EM_a_vf.
+  Updated the relevant PMD to use the new devices and MAC types.
 
 * **Added x550em_x V2 device support.**
 
-  Only x550em_x V1 was supported before. Now V2 is supported.
+  Added support for x550em_x V2 device. Only x550em_x V1 was supported before.
   A mask for V1 and V2 is defined and used to support both.
 
 * **Supported link speed auto-negotiation on X550EM_X**
 
-  Normally the auto-negotiation is supported by FW. SW need not care about
-  that. But on x550em_x, FW doesn't support auto-neg. As the ports of x550em_x
-  are 10G, if we connect the port with a peer which is 1G, the link will always
+  Normally the auto-negotiation is supported by firmware and software doesn't care about
+  it. But on x550em_x, firmware doesn't support auto-negotiation. As the ports of x550em_x
+  are 10GbE, if we connect the port with a peer which is 1GbE, the link will always
   be down.
-  We added the support of auto-neg by SW to avoid this link down issue.
+  We added the support for auto-negotiation by software to avoid this link down issue.
 
-* **Added sw-firmware sync on X550EM_a.**
+* **Added software-firmware sync on X550EM_a.**
 
-  Added support for sw-firmware sync for resource sharing.
-  Use the PHY token, shared between sw-fw for PHY access on X550EM_a.
+  Added support for software-firmware sync for resource sharing.
+  Use the PHY token, shared between software-firmware for PHY access on X550EM_a.
 
 * **Updated the i40e base driver.**
 
   The i40e base driver was updated with changes including the
   following:
 
-  * Use Rx control AQ commands to read/write Rx control registers.
+  * Use RX control AQ commands to read/write RX control registers.
   * Add new X722 device IDs, and removed X710 one was never used.
   * Expose registers for HASH/FD input set configuring.
 
 * **Enabled PCI extended tag for i40e.**
 
-  It enabled extended tag by checking and writing corresponding PCI config
-  space bytes, to boost the performance. In the meanwhile, it deprecated the
-  legacy way via reading/writing sysfile supported by kernel module igb_uio.
+  Enabled extended tag for i40e by checking and writing corresponding PCI config
+  space bytes, to boost the performance.
+  The legacy method of reading/writing sysfile supported by kernel module igb_uio
+  is now deprecated.
 
 * **Added i40e support for setting mac addresses.**
 
@@ -172,22 +167,26 @@ This section should contain new features added in this release. Sample format:
 
 * **Added i40e VEB switching support.**
 
-* **Added fm10k Rx interrupt support.**
+* **Added Flow director enhancements in i40e.**
 
-* **Optimized fm10k Tx.**
+* **Added PF reset event reporting in i40e VF driver.**
 
-  * Free multiple mbufs at a time to reduce freeing mbuf cycles.
+* **Added fm10k RX interrupt support.**
 
-* **Handled error flags in fm10k vector Rx.**
+* **Optimized fm10k TX.**
 
-  Parse err flags in Rx desc and set error bits in mbuf with vector instructions.
+  Optimized fm10k TX by freeing multiple mbufs at a time.
+
+* **Handled error flags in fm10k vector RX.**
+
+  Parse error flags in RX descriptor and set error bits in mbuf with vector instructions.
 
 * **Added fm10k FTAG based forwarding support.**
 
 * **Added mlx5 flow director support.**
 
-  Added flow director support (RTE_FDIR_MODE_PERFECT and
-  RTE_FDIR_MODE_PERFECT_MAC_VLAN).
+  Added flow director support (``RTE_FDIR_MODE_PERFECT`` and
+  ``RTE_FDIR_MODE_PERFECT_MAC_VLAN``).
 
   Only available with Mellanox OFED >= 3.2.
 
@@ -197,10 +196,37 @@ This section should contain new features added in this release. Sample format:
 
   Only available with Mellanox OFED >= 3.2.
 
-* **Changed szedata2 type of driver from vdev to pdev.**
+* **Added mlx5 link up/down callbacks.**
+
+  Implemented callbacks to bring link up and down.
+
+* **Added mlx5 support for operation in secondary processes.**
+
+  Implemented TX support in secondary processes (like mlx4).
+
+* **Added mlx5 RX CRC stripping configuration.**
+
+  Until now, CRC was always stripped. It can now be configured.
+
+  Only available with Mellanox OFED >= 3.2.
+
+* **Added mlx5 optional packet padding by HW.**
+
+  Added an option to make PCI bus transactions rounded to a multiple of a
+  cache line size for better alignment.
+
+  Only available with Mellanox OFED >= 3.2.
+
+* **Added mlx5 TX VLAN insertion support.**
+
+  Added support for TX VLAN insertion.
+
+  Only available with Mellanox OFED >= 3.2.
+
+* **Changed szedata2 driver type from vdev to pdev.**
 
   Previously szedata2 device had to be added by ``--vdev`` option.
-  Now szedata2 PMD recognises the device automatically during EAL
+  Now szedata2 PMD recognizes the device automatically during EAL
   initialization.
 
 * **Added szedata2 functions for setting link up/down.**
@@ -209,17 +235,17 @@ This section should contain new features added in this release. Sample format:
 
 * **Added af_packet dynamic removal function.**
 
-  Af_packet device can now be detached using API, like other PMD devices.
+  An af_packet device can now be detached using the API, like other PMD devices.
 
 * **Increased number of next hops for LPM IPv4 to 2^24.**
 
-  The next_hop field is extended from 8 bits to 24 bits for IPv4.
+  The ``next_hop`` field has been extended from 8 bits to 24 bits for IPv4.
 
 * **Added support of SNOW 3G (UEA2 and UIA2) for Intel Quick Assist devices.**
 
-  Enabled support for SNOW 3G wireless algorithm for Intel Quick Assist devices.
-  Support for cipher only, hash only is also provided
-  along with alg-chaining operations.
+  Enabled support for the SNOW 3G wireless algorithm for Intel Quick Assist devices.
+  Support for cipher-only and  hash-only is also provided
+  along with algorithm-chaining operations.
 
 * **Added SNOW3G SW PMD.**
 
@@ -229,48 +255,40 @@ This section should contain new features added in this release. Sample format:
 * **Added AES GCM PMD.**
 
   Added new Crypto PMD to support AES-GCM authenticated encryption and
-  authenticated decryption in SW.
+  authenticated decryption in software.
 
 * **Added NULL Crypto PMD**
 
-  Added new Crypto PMD to support null crypto operations in SW.
+  Added new Crypto PMD to support null crypto operations in software.
 
 * **Improved IP Pipeline Application.**
 
   The following features have been added to ip_pipeline application;
 
   * Added CPU utilization measurement and idle cycle rate computation.
-  * Added link idenfication support through existing port-mask option or by
+  * Added link identification support through existing port-mask option or by
     specifying PCI device in every LINK section in the configuration file.
   * Added load balancing support in passthrough pipeline.
 
 * **Added IPsec security gateway example.**
 
-  New application implementing an IPsec Security Gateway.
+  Added a new application implementing an IPsec Security Gateway.
 
 
 Resolved Issues
 ---------------
 
-This section should contain bug fixes added to the relevant sections. Sample format:
-
-* **code/section: Fixed issue in the past tense with a full stop.**
-
-  Add a short 1-2 sentence description of the resolved issue in the past tense.
-  The title should contain the code/lib section like a commit message.
-  Add the entries in alphabetic order in the relevant sections below.
-
-
-EAL
-~~~
-
-
 Drivers
 ~~~~~~~
 
+* **ethdev: Fixed overflow for 100Gbps.**
+
+  100Gbps in Mbps (100000) was exceeding the 16-bit max value of ``link_speed``
+  in ``rte_eth_link``.
+
 * **ethdev: Fixed byte order consistency between fdir flow and mask.**
 
-  Fixed issue in ethdev library that the structure for setting
+  Fixed issue in ethdev library where the structure for setting
   fdir's mask and flow entry was not consistent in byte ordering.
 
 * **cxgbe: Fixed crash due to incorrect size allocated for RSS table.**
@@ -281,12 +299,12 @@ Drivers
 
 * **cxgbe: Fixed setting wrong device MTU.**
 
-  Fixed an incorrect device MTU being set due to ethernet header and
+  Fixed an incorrect device MTU being set due to the Ethernet header and
   CRC lengths being added twice.
 
 * **ixgbe: Fixed zeroed VF mac address.**
 
-  Resolved an issue where VF mac address is zeroed out in cases where the VF
+  Resolved an issue where the VF MAC address is zeroed out in cases where the VF
   driver is loaded while the PF interface is down.
   The solution is to only set it when we get an ACK from the PF.
 
@@ -302,16 +320,34 @@ Drivers
   The driver now set the MDIO clock speed prior to initializing PHY ops and
   again after the MAC reset.
 
+* **ixgbe: Fixed maximum number of available TX queues.**
+
+  In IXGBE, the maximum number of TX queues varies depending on the NIC operating
+  mode. This was not being updated in the device information, providing
+  an incorrect number in some cases.
+
 * **i40e: Generated MAC address for each VFs.**
 
   It generates a MAC address for each VFs during PF host initialization,
   and keeps the VF MAC address the same among different VF launch.
 
-* **i40e: Fixed failure of reading/writing Rx control registers.**
+* **i40e: Fixed failure of reading/writing RX control registers.**
 
   Fixed i40e issue of failing to read/write rx control registers when
   under stress with traffic, which might result in application launch
   failure.
+
+* **i40e: Enabled vector driver by default.**
+
+  Previously, vector driver was disabled by default as it couldn't fill packet type
+  info for l3fwd to work well. Now there is an option for l3fwd to analyze
+  the packet type so the vector driver is enabled by default.
+
+* **i40e: Fixed link info of VF.**
+
+  Previously, the VF's link speed stayed at 10GbE and status always was up.
+  It did not change even when the physical link's status changed.
+  Now this issue is fixed to make VF's link info consistent with physical link.
 
 * **mlx5: Fixed possible crash during initialization.**
 
@@ -319,7 +355,7 @@ Drivers
 
 * **mlx5: Added port type check.**
 
-  Done to prevent port initialization on non-Ethernet link layers and
+  Added port type check to prevent port initialization on non-Ethernet link layers and
   to report an error.
 
 * **mlx5: Applied VLAN filtering to broadcast and IPv6 multicast flows.**
@@ -332,10 +368,10 @@ Drivers
 
 * **aesni_mb: Fixed wrong return value when creating a device.**
 
-  cryptodev_aesni_mb_init() was returning the device id of the device created,
-  instead of 0 (when success), that rte_eal_vdev_init() expects.
-  This made impossible the creation of more than one aesni_mb device
-  from command line.
+  The ``cryptodev_aesni_mb_init()`` function was returning the device id of the device created,
+  instead of 0 (on success) that ``rte_eal_vdev_init()`` expects.
+  This made it impossible to create more than one aesni_mb device
+  from the command line.
 
 * **qat: Fixed AES GCM decryption.**
 
@@ -349,7 +385,33 @@ Libraries
 * **hash: Fixed CRC32c hash computation for non multiple of 4 bytes sizes.**
 
   Fix crc32c hash functions to return a valid crc32c value for data lengths
-  not multiple of 4 bytes.
+  not a multiple of 4 bytes.
+
+* **hash: Fixed hash library to support multi-process mode.**
+
+  Fix hash library to support multi-process mode, using a jump table,
+  instead of storing a function pointer to the key compare function.
+  Multi-process mode only works with the built-in compare functions,
+  however a custom compare function (not in the jump table) can only
+  be used in single-process mode.
+
+* **hash: Fixed return value when allocating an existing hash table.**
+
+  Changed the ``rte_hash*_create()`` functions to return ``NULL`` and set
+  ``rte_errno`` to ``EEXIST`` when the object name already exists. This is
+  the behavior described in the API documentation in the header file.
+  The previous behavior was to return a pointer to the existing object in
+  that case, preventing the caller from knowing if the object had to be freed
+  or not.
+
+* **lpm: Fixed return value when allocating an existing object.**
+
+  Changed the ``rte_lpm*_create()`` functions to return ``NULL`` and set
+  ``rte_errno`` to ``EEXIST`` when the object name already exists. This is
+  the behavior described in the API documentation in the header file.
+  The previous behavior was to return a pointer to the existing object in
+  that case, preventing the caller from knowing if the object had to be freed
+  or not.
 
 * **librte_port: Fixed segmentation fault for ring and ethdev writer nodrop.**
 
@@ -365,34 +427,29 @@ Examples
   other than IPv4 or IPv6, the mbuf was not released, and caused
   a memory leak.
 
+* **l3fwd: Fixed using packet type blindly.**
+
+  l3fwd makes use of packet type information without querying if devices or PMDs
+  really set it. For those devices that don't set ptypes, add an option to parse it.
+
 * **examples/vhost: Fixed frequent mbuf allocation failure.**
 
-  vhost-switch often fails to allocate mbuf when dequeue from vring because it
+  The vhost-switch often fails to allocate mbuf when dequeue from vring because it
   wrongly calculates the number of mbufs needed.
-
-
-Other
-~~~~~
-
-
-Known Issues
-------------
-
-This section should contain new known issues in this release. Sample format:
-
-* **Add title in present tense with full stop.**
-
-  Add a short 1-2 sentence description of the known issue in the present
-  tense. Add information on any known workarounds.
 
 
 API Changes
 -----------
 
-This section should contain API changes. Sample format:
+* The ethdev statistics counter ``imissed`` is considered to be independent of ``ierrors``.
+  All drivers are now counting the missed packets only once, i.e. drivers will
+  not increment ierrors anymore for missed packets.
 
-* Add a short 1-2 sentence description of the API change. Use fixed width
-  quotes for ``rte_function_names`` or ``rte_struct_names``. Use the past tense.
+* The ethdev structure ``rte_eth_dev_info`` was changed to support device
+  speed capabilities.
+
+* The ethdev structures ``rte_eth_link`` and ``rte_eth_conf`` were changed to
+  support the new link API.
 
 * The functions ``rte_eth_dev_udp_tunnel_add`` and ``rte_eth_dev_udp_tunnel_delete``
   have been renamed into ``rte_eth_dev_udp_tunnel_port_add`` and
@@ -408,13 +465,13 @@ This section should contain API changes. Sample format:
 * A parameter ``vlan_type`` has been added to the function
   ``rte_eth_dev_set_vlan_ether_type``.
 
-* AF_packet device init function is no longer public. Device should be attached
-  with API.
+* The af_packet device init function is no longer public. The device should be attached
+  via the API.
 
 * The LPM ``next_hop`` field is extended from 8 bits to 24 bits for IPv4
   while keeping ABI compatibility.
 
-* A new ``rte_lpm_config`` structure is used so LPM library will allocate
+* A new ``rte_lpm_config`` structure is used so the LPM library will allocate
   exactly the amount of memory which is necessary to hold application’s rules.
   The previous ABI is kept for compatibility.
 
@@ -426,20 +483,17 @@ This section should contain API changes. Sample format:
 ABI Changes
 -----------
 
-* Add a short 1-2 sentence description of the ABI change that was announced in
-  the previous releases and made in this release. Use fixed width quotes for
-  ``rte_function_names`` or ``rte_struct_names``. Use the past tense.
-
 * The RETA entry size in ``rte_eth_rss_reta_entry64`` has been increased
   from 8-bit to 16-bit.
+
+* The ethdev flow director structure ``rte_eth_fdir_flow`` structure was
+  changed. New fields were added to extend flow director's input set.
 
 * The cmdline buffer size has been increase from 256 to 512.
 
 
 Shared Library Versions
 -----------------------
-
-Update any library version updated in this release and prepend with a ``+`` sign.
 
 The libraries prepended with a plus sign were incremented in this version.
 
@@ -472,3 +526,124 @@ The libraries prepended with a plus sign were incremented in this version.
      librte_table.so.2
      librte_timer.so.1
      librte_vhost.so.2
+
+
+Tested Platforms
+----------------
+
+#. SuperMicro 1U
+
+   - BIOS: 1.0c
+   - Processor: Intel(R) Atom(TM) CPU C2758 @ 2.40GHz
+
+#. SuperMicro 1U
+
+   - BIOS: 1.0a
+   - Processor: Intel(R) Xeon(R) CPU D-1540 @ 2.00GHz
+   - Onboard NIC: Intel(R) X552/X557-AT (2x10G)
+
+     - Firmware-version: 0x800001cf
+     - Device ID (PF/VF): 8086:15ad /8086:15a8
+
+   - kernel driver version: 4.2.5 (ixgbe)
+
+#. SuperMicro 1U
+
+   - BIOS: 1.0a
+   - Processor: Intel(R) Xeon(R) CPU E5-4667 v3 @ 2.00GHz
+
+#. Intel(R) Server board S2600GZ
+
+   - BIOS: SE5C600.86B.02.02.0002.122320131210
+   - Processor: Intel(R) Xeon(R) CPU E5-2680 v2 @ 2.80GHz
+
+#. Intel(R) Server board W2600CR
+
+   - BIOS: SE5C600.86B.02.01.0002.082220131453
+   - Processor: Intel(R) Xeon(R) CPU E5-2680 v2 @ 2.80GHz
+
+#. Intel(R) Server board S2600CWT
+
+   - BIOS: SE5C610.86B.01.01.0009.060120151350
+   - Processor: Intel(R) Xeon(R) CPU E5-2699 v3 @ 2.30GHz
+
+#. Intel(R) Server board S2600WTT
+
+   - BIOS: SE5C610.86B.01.01.0005.101720141054
+   - Processor: Intel(R) Xeon(R) CPU E5-2699 v3 @ 2.30GHz
+
+#. Intel(R) Server board S2600WTT
+
+   - BIOS: SE5C610.86B.11.01.0044.090120151156
+   - Processor: Intel(R) Xeon(R) CPU E5-2695 v4 @ 2.10GHz
+
+
+Tested NICs
+-----------
+
+#. Intel(R) Ethernet Controller X540-AT2
+
+   - Firmware version: 0x80000389
+   - Device id (pf): 8086:1528
+   - Driver version: 3.23.2 (ixgbe)
+
+#. Intel(R) 82599ES 10 Gigabit Ethernet Controller
+
+   - Firmware version: 0x61bf0001
+   - Device id (pf/vf): 8086:10fb / 8086:10ed
+   - Driver version: 4.0.1-k (ixgbe)
+
+#. Intel(R) Corporation Ethernet Connection X552/X557-AT 10GBASE-T
+
+   - Firmware version: 0x800001cf
+   - Device id (pf/vf): 8086:15ad / 8086:15a8
+   - Driver version: 4.2.5 (ixgbe)
+
+#. Intel(R) Ethernet Converged Network Adapter X710-DA4 (4x10G)
+
+   - Firmware version: 5.02 0x80002284
+   - Device id (pf/vf): 8086:1572 / 8086:154c
+   - Driver version: 1.4.26 (i40e)
+
+#. Intel(R) Ethernet Converged Network Adapter X710-DA2 (2x10G)
+
+   - Firmware version: 5.02 0x80002282
+   - Device id (pf/vf): 8086:1572 / 8086:154c
+   - Driver version: 1.4.25 (i40e)
+
+#. Intel(R) Ethernet Converged Network Adapter XL710-QDA1 (1x40G)
+
+   - Firmware version: 5.02 0x80002281
+   - Device id (pf/vf): 8086:1584 / 8086:154c
+   - Driver version: 1.4.25 (i40e)
+
+#. Intel(R) Ethernet Converged Network Adapter XL710-QDA2 (2X40G)
+
+   - Firmware version: 5.02 0x80002285
+   - Device id (pf/vf): 8086:1583 / 8086:154c
+   - Driver version: 1.4.25 (i40e)
+
+#. Intel(R) 82576EB Gigabit Ethernet Controller
+
+   - Firmware version: 1.2.1
+   - Device id (pf): 8086:1526
+   - Driver version: 5.2.13-k (igb)
+
+#. Intel(R) Ethernet Controller I210
+
+   - Firmware version: 3.16, 0x80000500, 1.304.0
+   - Device id (pf): 8086:1533
+   - Driver version: 5.2.13-k (igb)
+
+#. Intel(R) Corporation I350 Gigabit Network Connection
+
+   - Firmware version: 1.48, 0x800006e7
+   - Device id (pf/vf): 8086:1521 / 8086:1520
+   - Driver version: 5.2.13-k (igb)
+
+
+#. Intel(R) Ethernet Multi-host Controller FM10000
+
+   - Firmware version: N/A
+   - Device id (pf/vf): 8086:15d0
+   - Driver version: 0.17.0.9 (fm10k)

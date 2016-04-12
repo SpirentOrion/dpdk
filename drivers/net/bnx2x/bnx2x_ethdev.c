@@ -44,9 +44,9 @@ bnx2x_link_update(struct rte_eth_dev *dev)
 		case DUPLEX_HALF:
 			dev->data->dev_link.link_duplex = ETH_LINK_HALF_DUPLEX;
 			break;
-		default:
-			dev->data->dev_link.link_duplex = ETH_LINK_AUTONEG_DUPLEX;
 	}
+	dev->data->dev_link.link_autoneg = !(dev->data->dev_conf.link_speeds &
+			ETH_LINK_SPEED_FIXED);
 	dev->data->dev_link.link_status = sc->link_vars.link_up;
 }
 
@@ -266,7 +266,7 @@ bnx2xvf_dev_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_comple
 	if (sc->old_bulletin.valid_bitmap & (1 << CHANNEL_DOWN)) {
 		PMD_DRV_LOG(ERR, "PF indicated channel is down."
 				"VF device is no longer operational");
-		dev->data->dev_link.link_status = 0;
+		dev->data->dev_link.link_status = ETH_LINK_DOWN;
 	}
 
 	return old_link_status == dev->data->dev_link.link_status ? -1 : 0;
@@ -327,6 +327,7 @@ bnx2x_dev_infos_get(struct rte_eth_dev *dev, __rte_unused struct rte_eth_dev_inf
 	dev_info->min_rx_bufsize = BNX2X_MIN_RX_BUF_SIZE;
 	dev_info->max_rx_pktlen  = BNX2X_MAX_RX_PKT_LEN;
 	dev_info->max_mac_addrs  = BNX2X_MAX_MAC_ADDRS;
+	dev_info->speed_capa = ETH_LINK_SPEED_10G | ETH_LINK_SPEED_20G;
 }
 
 static void
@@ -348,7 +349,7 @@ bnx2x_mac_addr_remove(struct rte_eth_dev *dev, uint32_t index)
 		sc->mac_ops.mac_addr_remove(dev, index);
 }
 
-static struct eth_dev_ops bnx2x_eth_dev_ops = {
+static const struct eth_dev_ops bnx2x_eth_dev_ops = {
 	.dev_configure                = bnx2x_dev_configure,
 	.dev_start                    = bnx2x_dev_start,
 	.dev_stop                     = bnx2x_dev_stop,
@@ -371,7 +372,7 @@ static struct eth_dev_ops bnx2x_eth_dev_ops = {
 /*
  * dev_ops for virtual function
  */
-static struct eth_dev_ops bnx2xvf_eth_dev_ops = {
+static const struct eth_dev_ops bnx2xvf_eth_dev_ops = {
 	.dev_configure                = bnx2x_dev_configure,
 	.dev_start                    = bnx2x_dev_start,
 	.dev_stop                     = bnx2x_dev_stop,

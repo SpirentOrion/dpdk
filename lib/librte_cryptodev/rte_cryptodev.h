@@ -39,9 +39,6 @@
  *
  * Defines RTE Crypto Device APIs for the provisioning of cipher and
  * authentication operations.
- *
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  */
 
 #ifdef __cplusplus
@@ -839,7 +836,7 @@ struct rte_cryptodev_sym_session {
 	struct {
 		uint8_t dev_id;
 		/**< Device Id */
-		enum rte_cryptodev_type type;
+		enum rte_cryptodev_type dev_type;
 		/** Crypto Device type session created on */
 		struct rte_mempool *mp;
 		/**< Mempool session allocated from */

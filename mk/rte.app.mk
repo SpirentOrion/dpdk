@@ -85,15 +85,14 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_VHOST)          += -lrte_vhost
 ifeq ($(CONFIG_RTE_BUILD_SHARED_LIB),n)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_SCHED)          += -lm
 _LDLIBS-$(CONFIG_RTE_LIBRTE_SCHED)          += -lrt
+_LDLIBS-$(CONFIG_RTE_LIBRTE_METER)          += -lm
 ifeq ($(CONFIG_RTE_LIBRTE_VHOST_NUMA),y)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_VHOST)          += -lnuma
 endif
 ifeq ($(CONFIG_RTE_LIBRTE_VHOST_USER),n)
 _LDLIBS-$(CONFIG_RTE_LIBRTE_VHOST)          += -lfuse
 endif
-ifeq ($(CONFIG_RTE_NEXT_ABI),y)
 _LDLIBS-$(CONFIG_RTE_PORT_PCAP)             += -lpcap
-endif
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_PCAP)       += -lpcap
 _LDLIBS-$(CONFIG_RTE_LIBRTE_BNX2X_PMD)      += -lz
 _LDLIBS-$(CONFIG_RTE_LIBRTE_MLX4_PMD)       += -libverbs
@@ -101,6 +100,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_MLX5_PMD)       += -libverbs
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_SZEDATA2)   += -lsze2
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_XENVIRT)    += -lxenstore
 _LDLIBS-$(CONFIG_RTE_LIBRTE_MPIPE_PMD)      += -lgxio
+_LDLIBS-$(CONFIG_RTE_LIBRTE_NFP_PMD)        += -lm
 # QAT / AESNI GCM PMDs are dependent on libcrypto (from openssl)
 # for calculating HMAC precomputes
 ifeq ($(CONFIG_RTE_LIBRTE_PMD_QAT),y)
@@ -138,6 +138,7 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_I40E_PMD)       += -lrte_pmd_i40e
 _LDLIBS-$(CONFIG_RTE_LIBRTE_FM10K_PMD)      += -lrte_pmd_fm10k
 _LDLIBS-$(CONFIG_RTE_LIBRTE_IXGBE_PMD)      += -lrte_pmd_ixgbe
 _LDLIBS-$(CONFIG_RTE_LIBRTE_E1000_PMD)      += -lrte_pmd_e1000
+_LDLIBS-$(CONFIG_RTE_LIBRTE_ENA_PMD)        += -lrte_pmd_ena
 _LDLIBS-$(CONFIG_RTE_LIBRTE_MLX4_PMD)       += -lrte_pmd_mlx4
 _LDLIBS-$(CONFIG_RTE_LIBRTE_MLX5_PMD)       += -lrte_pmd_mlx5
 _LDLIBS-$(CONFIG_RTE_LIBRTE_NFP_PMD)        += -lrte_pmd_nfp
@@ -166,6 +167,12 @@ _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_SNOW3G)     += -lrte_pmd_snow3g
 _LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_SNOW3G)     += -L$(LIBSSO_PATH)/build -lsso
 endif # CONFIG_RTE_LIBRTE_CRYPTODEV
 
+ifeq ($(CONFIG_RTE_LIBRTE_VHOST),y)
+
+_LDLIBS-$(CONFIG_RTE_LIBRTE_PMD_VHOST)      += -lrte_pmd_vhost
+
+endif # $(CONFIG_RTE_LIBRTE_VHOST)
+
 endif # ! $(CONFIG_RTE_BUILD_SHARED_LIB)
 
 _LDLIBS-y += $(EXECENV_LDLIBS)
@@ -173,6 +180,10 @@ _LDLIBS-y += --end-group
 _LDLIBS-y += --no-whole-archive
 
 LDLIBS += $(_LDLIBS-y) $(CPU_LDLIBS) $(EXTRA_LDLIBS)
+
+# Eliminate duplicates without sorting
+LDLIBS := $(shell echo $(LDLIBS) | \
+	awk '{for (i = 1; i <= NF; i++) { if (!seen[$$i]++) print $$i }}')
 
 .PHONY: all
 all: install

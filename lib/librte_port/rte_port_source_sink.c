@@ -36,10 +36,9 @@
 #include <rte_mbuf.h>
 #include <rte_mempool.h>
 #include <rte_malloc.h>
+#include <rte_memcpy.h>
 
 #ifdef RTE_NEXT_ABI
-
-#include <rte_memcpy.h>
 
 #ifdef RTE_PORT_PCAP
 #include <rte_ether.h>
@@ -74,39 +73,24 @@ struct rte_port_source {
 
 	struct rte_mempool *mempool;
 
-#ifdef RTE_NEXT_ABI
-	/* PCAP buffers and indexes */
+	/* PCAP buffers and indices */
 	uint8_t **pkts;
 	uint8_t *pkt_buff;
 	uint32_t *pkt_len;
 	uint32_t n_pkts;
 	uint32_t pkt_index;
-#endif
 };
 
 #ifdef RTE_NEXT_ABI
 
 #ifdef RTE_PORT_PCAP
 
-/**
- * Load PCAP file, allocate and copy packets in the file to memory
- *
- * @param p
- *   Parameters for source port
- * @param port
- *   Handle to source port
- * @param socket_id
- *   Socket id where the memory is created
- * @return
- *   0 on SUCCESS
- *   error code otherwise
- */
 static int
-pcap_source_load(struct rte_port_source_params *p,
-		struct rte_port_source *port,
+pcap_source_load(struct rte_port_source *port,
+		const char *file_name,
+		uint32_t n_bytes_per_pkt,
 		int socket_id)
 {
-	uint32_t status = 0;
 	uint32_t n_pkts = 0;
 	uint32_t i;
 	uint32_t *pkt_len_aligns = NULL;
@@ -121,18 +105,16 @@ pcap_source_load(struct rte_port_source_params *p,
 			(rte_pktmbuf_data_room_size(port->mempool) -
 			RTE_PKTMBUF_HEADROOM);
 
-	if (p->file_name == NULL)
-		return 0;
-
-	if (p->n_bytes_per_pkt == 0)
+	if (n_bytes_per_pkt == 0)
 		max_len = pktmbuf_maxlen;
 	else
-		max_len = RTE_MIN(p->n_bytes_per_pkt, pktmbuf_maxlen);
+		max_len = RTE_MIN(n_bytes_per_pkt, pktmbuf_maxlen);
 
 	/* first time open, get packet number */
-	pcap_handle = pcap_open_offline(p->file_name, pcap_errbuf);
+	pcap_handle = pcap_open_offline(file_name, pcap_errbuf);
 	if (pcap_handle == NULL) {
-		status = -ENOENT;
+		RTE_LOG(ERR, PORT, "Failed to open pcap file "
+			"'%s' for reading\n", file_name);
 		goto error_exit;
 	}
 
@@ -144,28 +126,29 @@ pcap_source_load(struct rte_port_source_params *p,
 	port->pkt_len = rte_zmalloc_socket("PCAP",
 		(sizeof(*port->pkt_len) * n_pkts), 0, socket_id);
 	if (port->pkt_len == NULL) {
-		status = -ENOMEM;
+		RTE_LOG(ERR, PORT, "No enough memory\n");
 		goto error_exit;
 	}
 
 	pkt_len_aligns = rte_malloc("PCAP",
 		(sizeof(*pkt_len_aligns) * n_pkts), 0);
 	if (pkt_len_aligns == NULL) {
-		status = -ENOMEM;
+		RTE_LOG(ERR, PORT, "No enough memory\n");
 		goto error_exit;
 	}
 
 	port->pkts = rte_zmalloc_socket("PCAP",
 		(sizeof(*port->pkts) * n_pkts), 0, socket_id);
 	if (port->pkts == NULL) {
-		status = -ENOMEM;
+		RTE_LOG(ERR, PORT, "No enough memory\n");
 		goto error_exit;
 	}
 
 	/* open 2nd time, get pkt_len */
-	pcap_handle = pcap_open_offline(p->file_name, pcap_errbuf);
+	pcap_handle = pcap_open_offline(file_name, pcap_errbuf);
 	if (pcap_handle == NULL) {
-		status = -ENOENT;
+		RTE_LOG(ERR, PORT, "Failed to open pcap file "
+			"'%s' for reading\n", file_name);
 		goto error_exit;
 	}
 
@@ -183,16 +166,17 @@ pcap_source_load(struct rte_port_source_params *p,
 	buff = rte_zmalloc_socket("PCAP",
 		total_buff_len, 0, socket_id);
 	if (buff == NULL) {
-		status = -ENOMEM;
+		RTE_LOG(ERR, PORT, "No enough memory\n");
 		goto error_exit;
 	}
 
 	port->pkt_buff = buff;
 
 	/* open file one last time to copy the pkt content */
-	pcap_handle = pcap_open_offline(p->file_name, pcap_errbuf);
+	pcap_handle = pcap_open_offline(file_name, pcap_errbuf);
 	if (pcap_handle == NULL) {
-		status = -ENOENT;
+		RTE_LOG(ERR, PORT, "Failed to open pcap file "
+			"'%s' for reading\n", file_name);
 		goto error_exit;
 	}
 
@@ -209,6 +193,10 @@ pcap_source_load(struct rte_port_source_params *p,
 
 	rte_free(pkt_len_aligns);
 
+	RTE_LOG(INFO, PORT, "Successfully load pcap file "
+		"'%s' with %u pkts\n",
+		file_name, port->n_pkts);
+
 	return 0;
 
 error_exit:
@@ -221,25 +209,30 @@ error_exit:
 	if (port->pkt_buff)
 		rte_free(port->pkt_buff);
 
-	return status;
+	return -1;
 }
 
-#else
-static int
-pcap_source_load(__rte_unused struct rte_port_source_params *p,
-		struct rte_port_source *port,
-		__rte_unused int socket_id)
-{
-	port->pkt_buff = NULL;
-	port->pkt_len = NULL;
-	port->pkts = NULL;
-	port->pkt_index = 0;
+#define PCAP_SOURCE_LOAD(port, file_name, n_bytes, socket_id)	\
+	pcap_source_load(port, file_name, n_bytes, socket_id)
 
-	return -ENOTSUP;
-}
+#else /* RTE_PORT_PCAP */
+
+#define PCAP_SOURCE_LOAD(port, file_name, n_bytes, socket_id)	\
+({								\
+	int _ret = 0;						\
+								\
+	if (file_name) {					\
+		RTE_LOG(ERR, PORT, "Source port field "		\
+			"\"file_name\" is not NULL.\n");	\
+		_ret = -1;					\
+	}							\
+								\
+	_ret;							\
+})
+
 #endif /* RTE_PORT_PCAP */
 
-#endif
+#endif /* RTE_NEXT_ABI */
 
 static void *
 rte_port_source_create(void *params, int socket_id)
@@ -267,36 +260,14 @@ rte_port_source_create(void *params, int socket_id)
 
 #ifdef RTE_NEXT_ABI
 
-	/* pcap file load and initialization */
-	int status = pcap_source_load(p, port, socket_id);
+	if (p->file_name) {
+		int status = PCAP_SOURCE_LOAD(port, p->file_name,
+			p->n_bytes_per_pkt, socket_id);
 
-	if (status == 0) {
-		if (port->pkt_buff != NULL) {
-			RTE_LOG(INFO, PORT, "Successfully load pcap file "
-				"'%s' with %u pkts\n",
-				p->file_name, port->n_pkts);
+		if (status < 0) {
+			rte_free(port);
+			port = NULL;
 		}
-	} else if (status != -ENOTSUP) {
-		/* ENOTSUP is not treated as error */
-		switch (status) {
-		case -ENOENT:
-			RTE_LOG(ERR, PORT, "%s: Failed to open pcap file "
-				"'%s' for reading\n",
-				__func__, p->file_name);
-			break;
-		case -ENOMEM:
-			RTE_LOG(ERR, PORT, "%s: Not enough memory\n",
-				__func__);
-			break;
-		default:
-			RTE_LOG(ERR, PORT, "%s: Failed to enable PCAP "
-				"support for unknown reason\n",
-				__func__);
-			break;
-		}
-
-		rte_free(port);
-		port = NULL;
 	}
 
 #endif
@@ -314,15 +285,12 @@ rte_port_source_free(void *port)
 	if (p == NULL)
 		return 0;
 
-#ifdef RTE_NEXT_ABI
-
 	if (p->pkt_len)
 		rte_free(p->pkt_len);
 	if (p->pkts)
 		rte_free(p->pkts);
 	if (p->pkt_buff)
 		rte_free(p->pkt_buff);
-#endif
 
 	rte_free(p);
 
@@ -343,8 +311,6 @@ rte_port_source_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 		rte_pktmbuf_reset(pkts[i]);
 	}
 
-#ifdef RTE_NEXT_ABI
-
 	if (p->pkt_buff != NULL) {
 		for (i = 0; i < n_pkts; i++) {
 			uint8_t *pkt_data = rte_pktmbuf_mtod(pkts[i],
@@ -360,8 +326,6 @@ rte_port_source_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 				p->pkt_index = 0;
 		}
 	}
-
-#endif
 
 	RTE_PORT_SOURCE_STATS_PKTS_IN_ADD(p, n_pkts);
 
@@ -413,65 +377,46 @@ struct rte_port_sink {
 
 #ifdef RTE_PORT_PCAP
 
-/**
- * Open PCAP file for dumping packets to the file later
- *
- * @param port
- *   Handle to sink port
- * @param p
- *   Sink port parameter
- * @return
- *   0 on SUCCESS
- *   error code otherwise
- */
 static int
 pcap_sink_open(struct rte_port_sink *port,
-		__rte_unused struct rte_port_sink_params *p)
+	const char *file_name,
+	uint32_t max_n_pkts)
 {
 	pcap_t *tx_pcap;
 	pcap_dumper_t *pcap_dumper;
 
-	if (p->file_name == NULL) {
-		port->dumper = NULL;
-		port->max_pkts = 0;
-		port->pkt_index = 0;
-		port->dump_finish = 0;
-		return 0;
-	}
-
 	/** Open a dead pcap handler for opening dumper file */
 	tx_pcap = pcap_open_dead(DLT_EN10MB, 65535);
-	if (tx_pcap == NULL)
-		return -ENOENT;
+	if (tx_pcap == NULL) {
+		RTE_LOG(ERR, PORT, "Cannot open pcap dead handler\n");
+		return -1;
+	}
 
 	/* The dumper is created using the previous pcap_t reference */
-	pcap_dumper = pcap_dump_open(tx_pcap, p->file_name);
-	if (pcap_dumper == NULL)
-		return -ENOENT;
+	pcap_dumper = pcap_dump_open(tx_pcap, file_name);
+	if (pcap_dumper == NULL) {
+		RTE_LOG(ERR, PORT, "Failed to open pcap file "
+			"\"%s\" for writing\n", file_name);
+		return -1;
+	}
 
 	port->dumper = pcap_dumper;
-	port->max_pkts = p->max_n_pkts;
+	port->max_pkts = max_n_pkts;
 	port->pkt_index = 0;
 	port->dump_finish = 0;
+
+	RTE_LOG(INFO, PORT, "Ready to dump packets to file \"%s\"\n",
+		file_name);
 
 	return 0;
 }
 
-uint8_t jumbo_pkt_buf[ETHER_MAX_JUMBO_FRAME_LEN];
-
-/**
- * Dump a packet to PCAP dumper
- *
- * @param p
- *   Handle to sink port
- * @param mbuf
- *   Handle to mbuf structure holding the packet
- */
 static void
-pcap_sink_dump_pkt(struct rte_port_sink *port, struct rte_mbuf *mbuf)
+pcap_sink_write_pkt(struct rte_port_sink *port, struct rte_mbuf *mbuf)
 {
 	uint8_t *pcap_dumper = (uint8_t *)(port->dumper);
 	struct pcap_pkthdr pcap_hdr;
+	uint8_t jumbo_pkt_buf[ETHER_MAX_JUMBO_FRAME_LEN];
 	uint8_t *pkt;
 
 	/* Maximum num packets already reached */
@@ -519,67 +464,52 @@ pcap_sink_dump_pkt(struct rte_port_sink *port, struct rte_mbuf *mbuf)
 
 }
 
-/**
- * Flush pcap dumper
- *
- * @param dumper
- *   Handle to pcap dumper
- */
+#define PCAP_SINK_OPEN(port, file_name, max_n_pkts)		\
+	pcap_sink_open(port, file_name, max_n_pkts)
 
-static void
-pcap_sink_flush_pkt(void *dumper)
-{
-	pcap_dumper_t *pcap_dumper = (pcap_dumper_t *)dumper;
+#define PCAP_SINK_WRITE_PKT(port, mbuf)				\
+	pcap_sink_write_pkt(port, mbuf)
 
-	pcap_dump_flush(pcap_dumper);
-}
+#define PCAP_SINK_FLUSH_PKT(dumper)				\
+do {								\
+	if (dumper)						\
+		pcap_dump_flush((pcap_dumper_t *)dumper);	\
+} while (0)
 
-/**
- * Close a PCAP dumper handle
- *
- * @param dumper
- *   Handle to pcap dumper
- */
-static void
-pcap_sink_close(void *dumper)
-{
-	pcap_dumper_t *pcap_dumper = (pcap_dumper_t *)dumper;
-
-	pcap_dump_close(pcap_dumper);
-}
+#define PCAP_SINK_CLOSE(dumper)					\
+do {								\
+	if (dumper)						\
+		pcap_dump_close((pcap_dumper_t *)dumper);	\
+} while (0)
 
 #else
 
-static int
-pcap_sink_open(struct rte_port_sink *port,
-		__rte_unused struct rte_port_sink_params *p)
-{
-	port->dumper = NULL;
-	port->max_pkts = 0;
-	port->pkt_index = 0;
-	port->dump_finish = 0;
+#define PCAP_SINK_OPEN(port, file_name, max_n_pkts)		\
+({								\
+	int _ret = 0;						\
+								\
+	if (file_name) {					\
+		RTE_LOG(ERR, PORT, "Sink port field "		\
+			"\"file_name\" is not NULL.\n");	\
+		_ret = -1;					\
+	}							\
+								\
+	_ret;							\
+})
 
-	return -ENOTSUP;
-}
+#define PCAP_SINK_WRITE_PKT(port, mbuf) {}
 
-static void
-pcap_sink_dump_pkt(__rte_unused struct rte_port_sink *port,
-		__rte_unused struct rte_mbuf *mbuf) {}
+#define PCAP_SINK_FLUSH_PKT(dumper)
 
-static void
-pcap_sink_flush_pkt(__rte_unused void *dumper) {}
-
-static void
-pcap_sink_close(__rte_unused void *dumper) {}
+#define PCAP_SINK_CLOSE(dumper)
 
 #endif
 
 static void *
-rte_port_sink_create(__rte_unused void *params, int socket_id)
+rte_port_sink_create(void *params, int socket_id)
 {
 	struct rte_port_sink *port;
 	struct rte_port_sink_params *p = params;
-	int status;
 
 	/* Memory allocation */
 	port = rte_zmalloc_socket("PORT", sizeof(*port),
@@ -589,24 +519,17 @@ rte_port_sink_create(__rte_unused void *params, int socket_id)
 		return NULL;
 	}
 
-	/* Try to open PCAP file for dumping, if possible */
-	status = pcap_sink_open(port, p);
-	if (status == 0) {
-		if (port->dumper != NULL)
-			RTE_LOG(INFO, PORT, "Ready to dump packets "
-				"to file %s\n", p->file_name);
+	if (!p)
+		return port;
 
-	} else if (status != -ENOTSUP) {
-		if (status == -ENOENT)
-			RTE_LOG(ERR, PORT, "%s: Failed to open pcap file "
-				"%s for writing\n", __func__,
-				p->file_name);
-		else
-			RTE_LOG(ERR, PORT, "%s: Failed to enable pcap "
-				"support for unknown reason\n", __func__);
+	if (p->file_name) {
+		int status = PCAP_SINK_OPEN(port, p->file_name,
+			p->max_n_pkts);
 
-		rte_free(port);
-		port = NULL;
+		if (status < 0) {
+			rte_free(port);
+			port = NULL;
+		}
 	}
 
 	return port;
@@ -615,11 +538,11 @@ rte_port_sink_create(__rte_unused void *params, int socket_id)
 static int
 rte_port_sink_tx(void *port, struct rte_mbuf *pkt)
 {
-	__rte_unused struct rte_port_sink *p = (struct rte_port_sink *) port;
+	struct rte_port_sink *p = (struct rte_port_sink *) port;
 
 	RTE_PORT_SINK_STATS_PKTS_IN_ADD(p, 1);
 	if (p->dumper != NULL)
-		pcap_sink_dump_pkt(p, pkt);
+		PCAP_SINK_WRITE_PKT(p, pkt);
 	rte_pktmbuf_free(pkt);
 	RTE_PORT_SINK_STATS_PKTS_DROP_ADD(p, 1);
 
@@ -630,7 +553,7 @@ static int
 rte_port_sink_tx_bulk(void *port, struct rte_mbuf **pkts,
 	uint64_t pkts_mask)
 {
-	__rte_unused struct rte_port_sink *p = (struct rte_port_sink *) port;
+	struct rte_port_sink *p = (struct rte_port_sink *) port;
 
 	if ((pkts_mask & (pkts_mask + 1)) == 0) {
 		uint64_t n_pkts = __builtin_popcountll(pkts_mask);
@@ -640,11 +563,8 @@ rte_port_sink_tx_bulk(void *port, struct rte_mbuf **pkts,
 		RTE_PORT_SINK_STATS_PKTS_DROP_ADD(p, n_pkts);
 
 		if (p->dumper) {
-			for (i = 0; i < n_pkts; i++) {
-				struct rte_mbuf *pkt = pkts[i];
-
-				pcap_sink_dump_pkt(p, pkt);
-			}
+			for (i = 0; i < n_pkts; i++)
+				PCAP_SINK_WRITE_PKT(p, pkts[i]);
 		}
 
 		for (i = 0; i < n_pkts; i++) {
@@ -661,7 +581,7 @@ rte_port_sink_tx_bulk(void *port, struct rte_mbuf **pkts,
 			for ( ; dump_pkts_mask; ) {
 				pkt_index = __builtin_ctzll(
 					dump_pkts_mask);
-				pcap_sink_dump_pkt(p, pkts[pkt_index]);
+				PCAP_SINK_WRITE_PKT(p, pkts[pkt_index]);
 				dump_pkts_mask &= ~(1LLU << pkt_index);
 			}
 		}
@@ -684,10 +604,13 @@ rte_port_sink_tx_bulk(void *port, struct rte_mbuf **pkts,
 static int
 rte_port_sink_flush(void *port)
 {
-	struct rte_port_sink *p = (struct rte_port_sink *)port;
+	struct rte_port_sink *p =
+			(struct rte_port_sink *)port;
 
-	if (p->dumper != NULL)
-		pcap_sink_flush_pkt(p->dumper);
+	if (p == NULL)
+		return 0;
+
+	PCAP_SINK_FLUSH_PKT(p->dumper);
 
 	return 0;
 }
@@ -697,12 +620,11 @@ rte_port_sink_free(void *port)
 {
 	struct rte_port_sink *p =
 			(struct rte_port_sink *)port;
-	/* Check input parameters */
+
 	if (p == NULL)
 		return 0;
 
-	if (p->dumper != NULL)
-		pcap_sink_close(p->dumper);
+	PCAP_SINK_CLOSE(p->dumper);
 
 	rte_free(p);
 

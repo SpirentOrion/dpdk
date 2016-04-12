@@ -57,6 +57,9 @@ endif
 DIRS-y += ipv4_multicast
 DIRS-$(CONFIG_RTE_LIBRTE_KNI) += kni
 DIRS-y += l2fwd
+ifneq ($(PQOS_INSTALL_PATH),)
+DIRS-y += l2fwd-cat
+endif
 DIRS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += l2fwd-crypto
 DIRS-$(CONFIG_RTE_LIBRTE_IVSHMEM) += l2fwd-ivshmem
 DIRS-$(CONFIG_RTE_LIBRTE_JOBSTATS) += l2fwd-jobstats
@@ -84,6 +87,12 @@ DIRS-$(CONFIG_RTE_LIBRTE_VHOST) += vhost
 DIRS-$(CONFIG_RTE_LIBRTE_XEN_DOM0) += vhost_xen
 DIRS-y += vmdq
 DIRS-y += vmdq_dcb
-DIRS-$(CONFIG_RTE_LIBRTE_POWER) += vm_power_manager
+ifeq ($(CONFIG_RTE_LIBRTE_POWER), y)
+ifeq ($(shell pkg-config --atleast-version=0.9.3 libvirt; echo $$?), 0)
+DIRS-y += vm_power_manager
+else
+$(info vm_power_manager requires libvirt >= 0.9.3)
+endif
+endif
 
 include $(RTE_SDK)/mk/rte.extsubdir.mk

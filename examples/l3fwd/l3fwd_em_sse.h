@@ -34,6 +34,15 @@
 #ifndef __L3FWD_EM_SSE_H__
 #define __L3FWD_EM_SSE_H__
 
+/**
+ * @file
+ * This is an optional implementation of packet classification in Exact-Match
+ * path using sequential packet classification method.
+ * While hash lookup multi seems to provide better performance, it's disabled
+ * by default and can be enabled with NO_HASH_LOOKUP_MULTI global define in
+ * compilation time.
+ */
+
 #include "l3fwd_sse.h"
 
 static inline __attribute__((always_inline)) uint16_t
@@ -43,8 +52,13 @@ em_get_dst_port(const struct lcore_conf *qconf, struct rte_mbuf *pkt,
 	uint8_t next_hop;
 	struct ipv4_hdr *ipv4_hdr;
 	struct ipv6_hdr *ipv6_hdr;
+	uint32_t tcp_or_udp;
+	uint32_t l3_ptypes;
 
-	if (RTE_ETH_IS_IPV4_HDR(pkt->packet_type)) {
+	tcp_or_udp = pkt->packet_type & (RTE_PTYPE_L4_TCP | RTE_PTYPE_L4_UDP);
+	l3_ptypes = pkt->packet_type & RTE_PTYPE_L3_MASK;
+
+	if (tcp_or_udp && (l3_ptypes == RTE_PTYPE_L3_IPV4)) {
 
 		/* Handle IPv4 headers.*/
 		ipv4_hdr = rte_pktmbuf_mtod_offset(pkt, struct ipv4_hdr *,
@@ -59,7 +73,7 @@ em_get_dst_port(const struct lcore_conf *qconf, struct rte_mbuf *pkt,
 
 		return next_hop;
 
-	} else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
+	} else if (tcp_or_udp && (l3_ptypes == RTE_PTYPE_L3_IPV6)) {
 
 		/* Handle IPv6 headers.*/
 		ipv6_hdr = rte_pktmbuf_mtod_offset(pkt, struct ipv6_hdr *,
@@ -88,7 +102,7 @@ l3fwd_em_send_packets(int nb_rx, struct rte_mbuf **pkts_burst,
 			uint8_t portid, struct lcore_conf *qconf)
 {
 	int32_t j;
-	uint32_t dst_port[MAX_PKT_BURST];
+	uint16_t dst_port[MAX_PKT_BURST];
 
 	for (j = 0; j < nb_rx; j++)
 		dst_port[j] = em_get_dst_port(qconf, pkts_burst[j], portid);
