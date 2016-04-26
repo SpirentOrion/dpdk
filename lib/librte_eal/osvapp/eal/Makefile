@@ -101,6 +101,8 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_keepalive.c
 # from arch dir
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_cpuflags.c
 
+CFLAGS_eal_common_cpuflags.o := $(CPUFLAGS_LIST)
+
 CFLAGS_eal.o := -D_GNU_SOURCE
 CFLAGS_eal_lcore.o := -D_GNU_SOURCE
 CFLAGS_eal_thread.o := -D_GNU_SOURCE
