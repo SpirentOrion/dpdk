@@ -291,7 +291,7 @@ rte_eal_intr_init(void)
 	intr_thread_pollable.reset(new rte::pollable());
 
 	/* Create a host thread to wait for/handle interrupts */
-	intr_thread = new sched::thread(
+	intr_thread = sched::thread::make(
 		[] { eal_intr_thread_main(nullptr); },
 		sched::thread::attr().name("eal-intr-thread"));
 	intr_thread->start();
