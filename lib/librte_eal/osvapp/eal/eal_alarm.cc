@@ -49,18 +49,18 @@ void eal_alarm_callback(async::serial_timer_task &task, struct alarm_item *item)
 
 	async::run_later([item] {
 		WITH_LOCK(list_mutex) {
-                        alarm_list.remove_if(
-                                [item](struct alarm_item *curr) -> bool {
-                                        if (item == curr) {
-                                                WITH_LOCK(curr->task_mutex) {
-                                                        delete curr->task;
-                                                }
-                                                rte_free(curr);
-                                                return true;
-                                        }
-                                        return false;
-                                });
-                }
+			alarm_list.remove_if(
+				[item](struct alarm_item *curr) -> bool {
+					if (item == curr) {
+						WITH_LOCK(curr->task_mutex) {
+							delete curr->task;
+						}
+						rte_free(curr);
+						return true;
+					}
+					return false;
+				});
+		}
 	});
 }
 
@@ -91,8 +91,10 @@ rte_eal_alarm_set(uint64_t us, rte_eal_alarm_callback cb_fn, void *cb_arg)
 			std::bind(eal_alarm_callback, _1, item));
 
 		if (item->task == NULL) {
-			rte_free(item);
-			return -ENOMEM;
+ 			DROP_LOCK(item->task_mutex) {
+      	rte_free(item);
+        return -ENOMEM;
+      }
 		}
 
 		item->task->reschedule(std::chrono::microseconds(us));
@@ -126,9 +128,9 @@ rte_eal_alarm_cancel(rte_eal_alarm_callback cb_fn, void *cb_arg)
 					&& !item->in_progress.load()) {
 					WITH_LOCK(item->task_mutex) {
 						item->task->cancel_sync();
-						rte_free(item);
-						return true;
-					}
+          }
+          rte_free(item);
+          return true;
 				}
 
 				return false;

@@ -162,6 +162,11 @@ pci_scan_one(hw::hw_device* dev)
 	/* get subsystem_device id */
 	rte_dev->id.subsystem_device_id = pci_dev->get_subsystem_id();
 
+  /* get class id */
+  rte_dev->id.class_id = ((pci_dev->get_base_class_code() << 16) |
+                          (pci_dev->get_sub_class_code() << 8) |
+                          (pci_dev->get_programming_interface()));
+
 	/* TODO: get max_vfs */
 	rte_dev->max_vfs = 0;
 
@@ -231,8 +236,8 @@ pci_scan_one(hw::hw_device* dev)
  * Scan the content of the PCI bus, and add the devices in the devices
  * list. Call pci_scan_one() for each pci entry found.
  */
-static int
-pci_scan(void)
+int
+rte_eal_pci_scan(void)
 {
 	unsigned dev_count = 0;
 	int err = 0;
@@ -491,7 +496,7 @@ rte_eal_pci_init(void)
 	if (internal_config.no_pci)
 		return 0;
 
-	if (pci_scan() < 0) {
+	if (rte_eal_pci_scan() < 0) {
 		RTE_LOG(ERR, EAL, "%s(): Cannot scan PCI bus\n", __func__);
 		return -1;
 	}

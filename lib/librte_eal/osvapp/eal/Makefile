@@ -43,8 +43,6 @@ VPATH += $(RTE_SDK)/lib/librte_eal/common/arch/$(ARCH_DIR)
 INC_FLAGS := -I$(SRCDIR)/include
 INC_FLAGS += -I$(RTE_SDK)/lib/librte_eal/common
 INC_FLAGS += -I$(RTE_SDK)/lib/librte_eal/common/include
-INC_FLAGS += -I$(RTE_SDK)/lib/librte_ring
-INC_FLAGS += -I$(RTE_SDK)/lib/librte_mempool
 INC_FLAGS += -I$(RTE_SDK)/lib/librte_malloc
 INC_FLAGS += -I$(RTE_SDK)/lib/librte_ether
 INC_FLAGS += -I$(RTE_SDK)/lib/librte_pmd_ring
@@ -58,6 +56,9 @@ INC_FLAGS += -I$(OSV_SDK)/include
 
 CFLAGS += $(INC_FLAGS) $(WERROR_FLAGS) -O3
 CXXFLAGS += $(INC_FLAGS) -std=gnu++11 -O3
+
+# Need to accept the existence of OSv specific functions on faith
+CC_SUPPORTS_Z = false
 
 LDLIBS += -ldl
 LDLIBS += -lpthread
@@ -100,6 +101,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_keepalive.c
 
 # from arch dir
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += rte_cpuflags.c
+SRCS-$(CONFIG_RTE_ARCH_X86) += rte_spinlock.c
 
 CFLAGS_eal_common_cpuflags.o := $(CPUFLAGS_LIST)
 

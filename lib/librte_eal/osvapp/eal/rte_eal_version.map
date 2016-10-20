@@ -154,3 +154,13 @@ DPDK_16.04 {
 	rte_eal_primary_proc_alive;
 
 } DPDK_2.2;
+
+DPDK_16.07 {
+	global:
+
+	rte_keepalive_mark_sleep;
+  rte_keepalive_register_relay_callback;
+  rte_rtm_supported;
+  rte_thread_setname;
+
+} DPDK_16.04;

@@ -197,3 +197,8 @@ int rte_sys_gettid(void)
 {
 	return (int)syscall(SYS_gettid);
 }
+
+int rte_thread_setname(pthread_t id, const char *name)
+{
+	return pthread_setname_np(id, name);
+}
