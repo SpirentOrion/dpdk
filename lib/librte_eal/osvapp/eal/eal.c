@@ -467,6 +467,45 @@ eal_get_hugepage_mem_size(void)
 	return (size < SIZE_MAX) ? (size_t)(size) : SIZE_MAX;
 }
 
+/* Parse the arguments for --log-level only */
+static void
+eal_log_level_parse(int argc, char **argv)
+{
+	int opt;
+	char **argvopt;
+	int option_index;
+	const int old_optind = optind;
+	const int old_optopt = optopt;
+	char * const old_optarg = optarg;
+
+	argvopt = argv;
+	optind = 1;
+
+	eal_reset_internal_config(&internal_config);
+
+	while ((opt = getopt_long(argc, argvopt, eal_short_options,
+				  eal_long_options, &option_index)) != EOF) {
+
+		int ret;
+
+		/* getopt is not happy, stop right now */
+		if (opt == '?')
+			break;
+
+		ret = (opt == OPT_LOG_LEVEL_NUM) ?
+			eal_parse_common_option(opt, optarg, &internal_config) : 0;
+
+		/* common parser is not happy */
+		if (ret < 0)
+			break;
+	}
+
+	/* restore getopt lib */
+	optind = old_optind;
+	optopt = old_optopt;
+	optarg = old_optarg;
+}
+
 /* Parse the argument given in the command line of the application */
 static int
 eal_parse_args(int argc, char **argv)
@@ -623,21 +662,21 @@ rte_eal_init(int argc, char **argv)
 	int i, fctret, ret;
 	pthread_t thread_id;
 	static rte_atomic32_t run_once = RTE_ATOMIC32_INIT(0);
-	struct shared_driver *solib = NULL;
-	const char *logid;
 	char cpuset[RTE_CPU_AFFINITY_STR_LEN];
 	char thread_name[RTE_MAX_THREAD_NAME_LEN];
+
+	/* checks if the machine is adequate */
+	rte_cpu_check_supported();
 
 	if (!rte_atomic32_test_and_set(&run_once))
 		return -1;
 
-	logid = strrchr(argv[0], '/');
-	logid = strdup(logid ? logid + 1: argv[0]);
-
 	thread_id = pthread_self();
 
-	if (rte_eal_log_early_init() < 0)
-		rte_panic("Cannot init early logs\n");
+	eal_log_level_parse(argc, argv);
+
+	/* set log level as early as possible */
+	rte_set_log_level(internal_config.log_level);
 
 	if (rte_eal_cpu_init() < 0)
 		rte_panic("Cannot detect lcores\n");
@@ -645,9 +684,6 @@ rte_eal_init(int argc, char **argv)
 	fctret = eal_parse_args(argc, argv);
 	if (fctret < 0)
 		exit(1);
-
-	/* set log level as early as possible */
-	rte_set_log_level(internal_config.log_level);
 
 	if (internal_config.no_hugetlbfs == 0 &&
 			internal_config.process_type != RTE_PROC_SECONDARY &&
@@ -676,9 +712,6 @@ rte_eal_init(int argc, char **argv)
 
 	rte_config_init();
 
-	if (rte_eal_pci_init() < 0)
-		rte_panic("Cannot init PCI\n");
-
 	if (rte_eal_memory_init() < 0)
 		rte_panic("Cannot init memory\n");
 
@@ -691,9 +724,6 @@ rte_eal_init(int argc, char **argv)
 	if (rte_eal_tailqs_init() < 0)
 		rte_panic("Cannot init tail queues for objects\n");
 
-	if (rte_eal_log_init(logid, internal_config.syslog_facility) < 0)
-		rte_panic("Cannot init logs\n");
-
 	if (rte_eal_alarm_init() < 0)
 		rte_panic("Cannot init interrupt-handling thread\n");
 
@@ -703,16 +733,13 @@ rte_eal_init(int argc, char **argv)
 	if (rte_eal_timer_init() < 0)
 		rte_panic("Cannot init HPET or TSC timers\n");
 
+	if(rte_eal_pci_init() < 0)
+		rte_panic("Cannot init PCI\n");
+
 	eal_check_mem_on_local_socket();
 
-	rte_eal_mcfg_complete();
-
-	TAILQ_FOREACH(solib, &solib_list, next) {
-		RTE_LOG(INFO, EAL, "open shared lib %s\n", solib->name);
-		solib->lib_handle = dlopen(solib->name, RTLD_NOW);
-		if (solib->lib_handle == NULL)
-			RTE_LOG(WARNING, EAL, "%s\n", dlerror());
-	}
+	if (eal_plugins_init() < 0)
+		rte_panic("Cannot init plugins\n");
 
 	eal_thread_init_master(rte_config.master_lcore);
 
@@ -760,6 +787,8 @@ rte_eal_init(int argc, char **argv)
 	/* Probe & Initialize PCI devices */
 	if (rte_eal_pci_probe())
 		rte_panic("Cannot probe PCI\n");
+
+	rte_eal_mcfg_complete();
 
 	return fctret;
 }

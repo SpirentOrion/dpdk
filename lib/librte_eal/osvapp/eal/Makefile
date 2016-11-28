@@ -35,7 +35,7 @@ LIB = librte_eal.a
 
 EXPORT_MAP := rte_eal_version.map
 
-LIBABIVER := 1
+LIBABIVER := 3
 
 VPATH += $(RTE_SDK)/lib/librte_eal/common
 VPATH += $(RTE_SDK)/lib/librte_eal/common/arch/$(ARCH_DIR)
@@ -69,7 +69,6 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) := eal.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_hugepage_info.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_memory.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_thread.c
-SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_log.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_pci.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_debug.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_lcore.cc
@@ -82,6 +81,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_alarm.cc
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_memzone.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_log.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_launch.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_vdev.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_pci.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_memory.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_tailqs.c

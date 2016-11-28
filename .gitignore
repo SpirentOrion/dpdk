@@ -7,3 +7,5 @@ examples/*/build/
 
 # config cruft
 config/*
+
+doc/guides/nics/overview_table.txt
