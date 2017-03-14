@@ -152,6 +152,8 @@ static const struct rte_virtio_xstats_name_off rte_virtio_txq_stat_strings[] = {
 #define VIRTIO_NB_TXQ_XSTATS (sizeof(rte_virtio_txq_stat_strings) / \
 			    sizeof(rte_virtio_txq_stat_strings[0]))
 
+struct virtio_hw_internal virtio_hw_internal[RTE_MAX_ETHPORTS];
+
 static int
 virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		int *dlen, int pkt_num)
@@ -360,7 +362,7 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 	 * Read the virtqueue size from the Queue Size field
 	 * Always power of 2 and if 0 virtqueue does not exist
 	 */
-	vq_size = hw->vtpci_ops->get_queue_num(hw, vtpci_queue_idx);
+	vq_size = VTPCI_OPS(hw)->get_queue_num(hw, vtpci_queue_idx);
 	PMD_INIT_LOG(DEBUG, "vq_size: %u", vq_size);
 	if (vq_size == 0) {
 		PMD_INIT_LOG(ERR, "virtqueue does not exist");
@@ -483,11 +485,11 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		hw->cvq = cvq;
 	}
 
-	/* For virtio_user case (that is when dev->pci_dev is NULL), we use
+	/* For virtio_user case (that is when hw->dev is NULL), we use
 	 * virtual address. And we need properly set _offset_, please see
 	 * VIRTIO_MBUF_DATA_DMA_ADDR in virtqueue.h for more information.
 	 */
-	if (dev->pci_dev)
+	if (!hw->virtio_user_dev)
 		vq->offset = offsetof(struct rte_mbuf, buf_physaddr);
 	else {
 		vq->vq_ring_mem = (uintptr_t)mz->addr;
@@ -519,7 +521,7 @@ virtio_init_queue(struct rte_eth_dev *dev, uint16_t vtpci_queue_idx)
 		}
 	}
 
-	if (hw->vtpci_ops->setup_queue(hw, vq) < 0) {
+	if (VTPCI_OPS(hw)->setup_queue(hw, vq) < 0) {
 		PMD_INIT_LOG(ERR, "setup_queue failed");
 		return -EINVAL;
 	}
@@ -591,16 +593,29 @@ virtio_alloc_queues(struct rte_eth_dev *dev)
 	return 0;
 }
 
+static void virtio_queues_unbind_intr(struct rte_eth_dev *dev);
+
 static void
 virtio_dev_close(struct rte_eth_dev *dev)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
+	struct rte_intr_conf *intr_conf = &dev->data->dev_conf.intr_conf;
 
 	PMD_INIT_LOG(DEBUG, "virtio_dev_close");
 
 	/* reset the NIC */
 	if (dev->data->dev_flags & RTE_ETH_DEV_INTR_LSC)
-		vtpci_irq_config(hw, VIRTIO_MSI_NO_VECTOR);
+		VTPCI_OPS(hw)->set_config_irq(hw, VIRTIO_MSI_NO_VECTOR);
+	if (intr_conf->rxq)
+		virtio_queues_unbind_intr(dev);
+
+	if (intr_conf->lsc || intr_conf->rxq) {
+		rte_intr_disable(dev->intr_handle);
+		rte_intr_efd_disable(dev->intr_handle);
+		rte_free(dev->intr_handle->intr_vec);
+		dev->intr_handle->intr_vec = NULL;
+	}
+
 	vtpci_reset(hw);
 	virtio_dev_free_mbufs(dev);
 	virtio_free_queues(hw);
@@ -615,7 +630,7 @@ virtio_dev_promiscuous_enable(struct rte_eth_dev *dev)
 	int ret;
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
-		PMD_INIT_LOG(INFO, "host does not support rx control\n");
+		PMD_INIT_LOG(INFO, "host does not support rx control");
 		return;
 	}
 
@@ -638,7 +653,7 @@ virtio_dev_promiscuous_disable(struct rte_eth_dev *dev)
 	int ret;
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
-		PMD_INIT_LOG(INFO, "host does not support rx control\n");
+		PMD_INIT_LOG(INFO, "host does not support rx control");
 		return;
 	}
 
@@ -661,7 +676,7 @@ virtio_dev_allmulticast_enable(struct rte_eth_dev *dev)
 	int ret;
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
-		PMD_INIT_LOG(INFO, "host does not support rx control\n");
+		PMD_INIT_LOG(INFO, "host does not support rx control");
 		return;
 	}
 
@@ -684,7 +699,7 @@ virtio_dev_allmulticast_disable(struct rte_eth_dev *dev)
 	int ret;
 
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_CTRL_RX)) {
-		PMD_INIT_LOG(INFO, "host does not support rx control\n");
+		PMD_INIT_LOG(INFO, "host does not support rx control");
 		return;
 	}
 
@@ -708,10 +723,30 @@ virtio_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	uint32_t frame_size = mtu + ether_hdr_len;
 
 	if (mtu < ETHER_MIN_MTU || frame_size > VIRTIO_MAX_RX_PKTLEN) {
-		PMD_INIT_LOG(ERR, "MTU should be between %d and %d\n",
+		PMD_INIT_LOG(ERR, "MTU should be between %d and %d",
 			ETHER_MIN_MTU, VIRTIO_MAX_RX_PKTLEN - ether_hdr_len);
 		return -EINVAL;
 	}
+	return 0;
+}
+
+static int
+virtio_dev_rx_queue_intr_enable(struct rte_eth_dev *dev, uint16_t queue_id)
+{
+	struct virtnet_rx *rxvq = dev->data->rx_queues[queue_id];
+	struct virtqueue *vq = rxvq->vq;
+
+	virtqueue_enable_intr(vq);
+	return 0;
+}
+
+static int
+virtio_dev_rx_queue_intr_disable(struct rte_eth_dev *dev, uint16_t queue_id)
+{
+	struct virtnet_rx *rxvq = dev->data->rx_queues[queue_id];
+	struct virtqueue *vq = rxvq->vq;
+
+	virtqueue_disable_intr(vq);
 	return 0;
 }
 
@@ -736,7 +771,10 @@ static const struct eth_dev_ops virtio_eth_dev_ops = {
 	.xstats_reset            = virtio_dev_stats_reset,
 	.link_update             = virtio_dev_link_update,
 	.rx_queue_setup          = virtio_dev_rx_queue_setup,
+	.rx_queue_intr_enable    = virtio_dev_rx_queue_intr_enable,
+	.rx_queue_intr_disable   = virtio_dev_rx_queue_intr_disable,
 	.rx_queue_release        = virtio_dev_queue_release,
+	.rx_descriptor_done      = virtio_dev_rx_queue_done,
 	.tx_queue_setup          = virtio_dev_tx_queue_setup,
 	.tx_queue_release        = virtio_dev_queue_release,
 	/* collect stats per queue */
@@ -893,6 +931,7 @@ virtio_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 		for (t = 0; t < VIRTIO_NB_RXQ_XSTATS; t++) {
 			xstats[count].value = *(uint64_t *)(((char *)rxvq) +
 				rte_virtio_rxq_stat_strings[t].offset);
+			xstats[count].id = count;
 			count++;
 		}
 	}
@@ -908,6 +947,7 @@ virtio_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 		for (t = 0; t < VIRTIO_NB_TXQ_XSTATS; t++) {
 			xstats[count].value = *(uint64_t *)(((char *)txvq) +
 				rte_virtio_txq_stat_strings[t].offset);
+			xstats[count].id = count;
 			count++;
 		}
 	}
@@ -1114,7 +1154,7 @@ virtio_negotiate_features(struct virtio_hw *hw, uint64_t req_features)
 		req_features);
 
 	/* Read device(host) feature bits */
-	host_features = hw->vtpci_ops->get_features(hw);
+	host_features = VTPCI_OPS(hw)->get_features(hw);
 	PMD_INIT_LOG(DEBUG, "host_features before negotiate = %" PRIx64,
 		host_features);
 
@@ -1151,7 +1191,7 @@ virtio_negotiate_features(struct virtio_hw *hw, uint64_t req_features)
  * if link state changed.
  */
 static void
-virtio_interrupt_handler(__rte_unused struct rte_intr_handle *handle,
+virtio_interrupt_handler(struct rte_intr_handle *handle,
 			 void *param)
 {
 	struct rte_eth_dev *dev = param;
@@ -1162,7 +1202,7 @@ virtio_interrupt_handler(__rte_unused struct rte_intr_handle *handle,
 	isr = vtpci_isr(hw);
 	PMD_DRV_LOG(INFO, "interrupt status = %#x", isr);
 
-	if (rte_intr_enable(&dev->pci_dev->intr_handle) < 0)
+	if (rte_intr_enable(handle) < 0)
 		PMD_DRV_LOG(ERR, "interrupt enable failed");
 
 	if (isr & VIRTIO_PCI_ISR_CONFIG) {
@@ -1183,6 +1223,95 @@ rx_func_get(struct rte_eth_dev *eth_dev)
 		eth_dev->rx_pkt_burst = &virtio_recv_pkts;
 }
 
+/* Only support 1:1 queue/interrupt mapping so far.
+ * TODO: support n:1 queue/interrupt mapping when there are limited number of
+ * interrupt vectors (<N+1).
+ */
+static int
+virtio_queues_bind_intr(struct rte_eth_dev *dev)
+{
+	uint32_t i;
+	struct virtio_hw *hw = dev->data->dev_private;
+
+	PMD_INIT_LOG(INFO, "queue/interrupt binding");
+	for (i = 0; i < dev->data->nb_rx_queues; ++i) {
+		dev->intr_handle->intr_vec[i] = i + 1;
+		if (VTPCI_OPS(hw)->set_queue_irq(hw, hw->vqs[i * 2], i + 1) ==
+						 VIRTIO_MSI_NO_VECTOR) {
+			PMD_DRV_LOG(ERR, "failed to set queue vector");
+			return -EBUSY;
+		}
+	}
+
+	return 0;
+}
+
+static void
+virtio_queues_unbind_intr(struct rte_eth_dev *dev)
+{
+	uint32_t i;
+	struct virtio_hw *hw = dev->data->dev_private;
+
+	PMD_INIT_LOG(INFO, "queue/interrupt unbinding");
+	for (i = 0; i < dev->data->nb_rx_queues; ++i)
+		VTPCI_OPS(hw)->set_queue_irq(hw,
+					     hw->vqs[i * VTNET_CQ],
+					     VIRTIO_MSI_NO_VECTOR);
+}
+
+static int
+virtio_configure_intr(struct rte_eth_dev *dev)
+{
+	struct virtio_hw *hw = dev->data->dev_private;
+
+	if (!rte_intr_cap_multiple(dev->intr_handle)) {
+		PMD_INIT_LOG(ERR, "Multiple intr vector not supported");
+		return -ENOTSUP;
+	}
+
+	if (rte_intr_efd_enable(dev->intr_handle, dev->data->nb_rx_queues)) {
+		PMD_INIT_LOG(ERR, "Fail to create eventfd");
+		return -1;
+	}
+
+	if (!dev->intr_handle->intr_vec) {
+		dev->intr_handle->intr_vec =
+			rte_zmalloc("intr_vec",
+				    hw->max_queue_pairs * sizeof(int), 0);
+		if (!dev->intr_handle->intr_vec) {
+			PMD_INIT_LOG(ERR, "Failed to allocate %u rxq vectors",
+				     hw->max_queue_pairs);
+			return -ENOMEM;
+		}
+	}
+
+	/* Re-register callback to update max_intr */
+	rte_intr_callback_unregister(dev->intr_handle,
+				     virtio_interrupt_handler,
+				     dev);
+	rte_intr_callback_register(dev->intr_handle,
+				   virtio_interrupt_handler,
+				   dev);
+
+	/* DO NOT try to remove this! This function will enable msix, or QEMU
+	 * will encounter SIGSEGV when DRIVER_OK is sent.
+	 * And for legacy devices, this should be done before queue/vec binding
+	 * to change the config size from 20 to 24, or VIRTIO_MSI_QUEUE_VECTOR
+	 * (22) will be ignored.
+	 */
+	if (rte_intr_enable(dev->intr_handle) < 0) {
+		PMD_DRV_LOG(ERR, "interrupt enable failed");
+		return -1;
+	}
+
+	if (virtio_queues_bind_intr(dev) < 0) {
+		PMD_INIT_LOG(ERR, "Failed to bind queue/interrupt");
+		return -1;
+	}
+
+	return 0;
+}
+
 /* reset device and renegotiate features if needed */
 static int
 virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
@@ -1190,7 +1319,7 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	struct virtio_hw *hw = eth_dev->data->dev_private;
 	struct virtio_net_config *config;
 	struct virtio_net_config local_config;
-	struct rte_pci_device *pci_dev = eth_dev->pci_dev;
+	struct rte_pci_device *pci_dev = NULL;
 	int ret;
 
 	/* Reset the device although not necessary at startup */
@@ -1204,13 +1333,16 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	if (virtio_negotiate_features(hw, req_features) < 0)
 		return -1;
 
+	if (eth_dev->device) {
+		pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
+		rte_eth_copy_pci_info(eth_dev, pci_dev);
+	}
+
 	/* If host does not support status then disable LSC */
 	if (!vtpci_with_feature(hw, VIRTIO_NET_F_STATUS))
 		eth_dev->data->dev_flags &= ~RTE_ETH_DEV_INTR_LSC;
 	else
 		eth_dev->data->dev_flags |= RTE_ETH_DEV_INTR_LSC;
-
-	rte_eth_copy_pci_info(eth_dev, pci_dev);
 
 	rx_func_get(eth_dev);
 
@@ -1276,6 +1408,14 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	ret = virtio_alloc_queues(eth_dev);
 	if (ret < 0)
 		return ret;
+
+	if (eth_dev->data->dev_conf.intr_conf.rxq) {
+		if (virtio_configure_intr(eth_dev) < 0) {
+			PMD_INIT_LOG(ERR, "failed to configure interrupt");
+			return -1;
+		}
+	}
+
 	vtpci_reinit_complete(hw);
 
 	if (pci_dev)
@@ -1287,6 +1427,52 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 }
 
 /*
+ * Remap the PCI device again (IO port map for legacy device and
+ * memory map for modern device), so that the secondary process
+ * could have the PCI initiated correctly.
+ */
+static int
+virtio_remap_pci(struct rte_pci_device *pci_dev, struct virtio_hw *hw)
+{
+	if (hw->modern) {
+		/*
+		 * We don't have to re-parse the PCI config space, since
+		 * rte_eal_pci_map_device() makes sure the mapped address
+		 * in secondary process would equal to the one mapped in
+		 * the primary process: error will be returned if that
+		 * requirement is not met.
+		 *
+		 * That said, we could simply reuse all cap pointers
+		 * (such as dev_cfg, common_cfg, etc.) parsed from the
+		 * primary process, which is stored in shared memory.
+		 */
+		if (rte_eal_pci_map_device(pci_dev)) {
+			PMD_INIT_LOG(DEBUG, "failed to map pci device!");
+			return -1;
+		}
+	} else {
+		if (rte_eal_pci_ioport_map(pci_dev, 0, VTPCI_IO(hw)) < 0)
+			return -1;
+	}
+
+	return 0;
+}
+
+static void
+virtio_set_vtpci_ops(struct virtio_hw *hw)
+{
+#ifdef RTE_VIRTIO_USER
+	if (hw->virtio_user_dev)
+		VTPCI_OPS(hw) = &virtio_user_ops;
+	else
+#endif
+	if (hw->modern)
+		VTPCI_OPS(hw) = &modern_ops;
+	else
+		VTPCI_OPS(hw) = &legacy_ops;
+}
+
+/*
  * This function is based on probe() function in virtio_pci.c
  * It returns 0 on success.
  */
@@ -1294,7 +1480,6 @@ int
 eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 {
 	struct virtio_hw *hw = eth_dev->data->dev_private;
-	struct rte_pci_device *pci_dev;
 	uint32_t dev_flags = RTE_ETH_DEV_DETACHABLE;
 	int ret;
 
@@ -1304,7 +1489,20 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 	eth_dev->tx_pkt_burst = &virtio_xmit_pkts;
 
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
-		rx_func_get(eth_dev);
+		if (!hw->virtio_user_dev) {
+			ret = virtio_remap_pci(RTE_DEV_TO_PCI(eth_dev->device),
+					       hw);
+			if (ret)
+				return ret;
+		}
+
+		virtio_set_vtpci_ops(hw);
+		if (hw->use_simple_rxtx) {
+			eth_dev->tx_pkt_burst = virtio_xmit_pkts_simple;
+			eth_dev->rx_pkt_burst = virtio_recv_pkts_vec;
+		} else {
+			rx_func_get(eth_dev);
+		}
 		return 0;
 	}
 
@@ -1317,10 +1515,13 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 		return -ENOMEM;
 	}
 
-	pci_dev = eth_dev->pci_dev;
-
-	if (pci_dev) {
-		ret = vtpci_init(pci_dev, hw, &dev_flags);
+	hw->port_id = eth_dev->data->port_id;
+	/* For virtio_user case the hw->virtio_user_dev is populated by
+	 * virtio_user_eth_dev_alloc() before eth_virtio_dev_init() is called.
+	 */
+	if (!hw->virtio_user_dev) {
+		ret = vtpci_init(RTE_DEV_TO_PCI(eth_dev->device), hw,
+				 &dev_flags);
 		if (ret)
 			return ret;
 	}
@@ -1334,7 +1535,7 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 
 	/* Setup interrupt callback  */
 	if (eth_dev->data->dev_flags & RTE_ETH_DEV_INTR_LSC)
-		rte_intr_callback_register(&pci_dev->intr_handle,
+		rte_intr_callback_register(eth_dev->intr_handle,
 			virtio_interrupt_handler, eth_dev);
 
 	return 0;
@@ -1343,8 +1544,6 @@ eth_virtio_dev_init(struct rte_eth_dev *eth_dev)
 static int
 eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 {
-	struct rte_pci_device *pci_dev;
-
 	PMD_INIT_FUNC_TRACE();
 
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY)
@@ -1352,7 +1551,6 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 
 	virtio_dev_stop(eth_dev);
 	virtio_dev_close(eth_dev);
-	pci_dev = eth_dev->pci_dev;
 
 	eth_dev->dev_ops = NULL;
 	eth_dev->tx_pkt_burst = NULL;
@@ -1363,10 +1561,11 @@ eth_virtio_dev_uninit(struct rte_eth_dev *eth_dev)
 
 	/* reset interrupt callback  */
 	if (eth_dev->data->dev_flags & RTE_ETH_DEV_INTR_LSC)
-		rte_intr_callback_unregister(&pci_dev->intr_handle,
+		rte_intr_callback_unregister(eth_dev->intr_handle,
 						virtio_interrupt_handler,
 						eth_dev);
-	rte_eal_pci_unmap_device(pci_dev);
+	if (eth_dev->device)
+		rte_eal_pci_unmap_device(RTE_DEV_TO_PCI(eth_dev->device));
 
 	PMD_INIT_LOG(DEBUG, "dev_uninit completed");
 
@@ -1379,7 +1578,7 @@ static struct eth_driver rte_virtio_pmd = {
 			.name = "net_virtio",
 		},
 		.id_table = pci_id_virtio_map,
-		.drv_flags = RTE_PCI_DRV_DETACHABLE,
+		.drv_flags = 0,
 		.probe = rte_eth_dev_pci_probe,
 		.remove = rte_eth_dev_pci_remove,
 	},
@@ -1457,7 +1656,9 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 	}
 
 	if (dev->data->dev_flags & RTE_ETH_DEV_INTR_LSC)
-		if (vtpci_irq_config(hw, 0) == VIRTIO_MSI_NO_VECTOR) {
+		/* Enable vector (0) for Link State Intrerrupt */
+		if (VTPCI_OPS(hw)->set_config_irq(hw, 0) ==
+				VIRTIO_MSI_NO_VECTOR) {
 			PMD_DRV_LOG(ERR, "failed to set config vector");
 			return -EBUSY;
 		}
@@ -1480,8 +1681,17 @@ virtio_dev_start(struct rte_eth_dev *dev)
 			PMD_DRV_LOG(ERR, "link status not supported by host");
 			return -ENOTSUP;
 		}
+	}
 
-		if (rte_intr_enable(&dev->pci_dev->intr_handle) < 0) {
+	/* Enable uio/vfio intr/eventfd mapping: althrough we already did that
+	 * in device configure, but it could be unmapped  when device is
+	 * stopped.
+	 */
+	if (dev->data->dev_conf.intr_conf.lsc ||
+	    dev->data->dev_conf.intr_conf.rxq) {
+		rte_intr_disable(dev->intr_handle);
+
+		if (rte_intr_enable(dev->intr_handle) < 0) {
 			PMD_DRV_LOG(ERR, "interrupt enable failed");
 			return -EIO;
 		}
@@ -1574,11 +1784,12 @@ static void
 virtio_dev_stop(struct rte_eth_dev *dev)
 {
 	struct rte_eth_link link;
+	struct rte_intr_conf *intr_conf = &dev->data->dev_conf.intr_conf;
 
 	PMD_INIT_LOG(DEBUG, "stop");
 
-	if (dev->data->dev_conf.intr_conf.lsc)
-		rte_intr_disable(&dev->pci_dev->intr_handle);
+	if (intr_conf->lsc || intr_conf->rxq)
+		rte_intr_disable(dev->intr_handle);
 
 	memset(&link, 0, sizeof(link));
 	virtio_dev_atomic_write_link_status(dev, &link);
@@ -1621,13 +1832,12 @@ virtio_dev_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complet
 static void
 virtio_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
-	uint64_t tso_mask;
+	uint64_t tso_mask, host_features;
 	struct virtio_hw *hw = dev->data->dev_private;
 
-	if (dev->pci_dev)
-		dev_info->driver_name = dev->driver->pci_drv.driver.name;
-	else
-		dev_info->driver_name = "virtio_user PMD";
+	dev_info->speed_capa = ETH_LINK_SPEED_10G; /* fake value */
+
+	dev_info->pci_dev = dev->device ? RTE_DEV_TO_PCI(dev->device) : NULL;
 	dev_info->max_rx_queues =
 		RTE_MIN(hw->max_queue_pairs, VIRTIO_MAX_RX_QUEUES);
 	dev_info->max_tx_queues =
@@ -1638,18 +1848,25 @@ virtio_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->default_txconf = (struct rte_eth_txconf) {
 		.txq_flags = ETH_TXQ_FLAGS_NOOFFLOADS
 	};
-	dev_info->rx_offload_capa =
-		DEV_RX_OFFLOAD_TCP_CKSUM |
-		DEV_RX_OFFLOAD_UDP_CKSUM |
-		DEV_RX_OFFLOAD_TCP_LRO;
-	dev_info->tx_offload_capa = 0;
 
+	host_features = VTPCI_OPS(hw)->get_features(hw);
+	dev_info->rx_offload_capa = 0;
+	if (host_features & (1ULL << VIRTIO_NET_F_GUEST_CSUM)) {
+		dev_info->rx_offload_capa |=
+			DEV_RX_OFFLOAD_TCP_CKSUM |
+			DEV_RX_OFFLOAD_UDP_CKSUM;
+	}
+	tso_mask = (1ULL << VIRTIO_NET_F_GUEST_TSO4) |
+		(1ULL << VIRTIO_NET_F_GUEST_TSO6);
+	if ((host_features & tso_mask) == tso_mask)
+		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_TCP_LRO;
+
+	dev_info->tx_offload_capa = 0;
 	if (hw->guest_features & (1ULL << VIRTIO_NET_F_CSUM)) {
 		dev_info->tx_offload_capa |=
 			DEV_TX_OFFLOAD_UDP_CKSUM |
 			DEV_TX_OFFLOAD_TCP_CKSUM;
 	}
-
 	tso_mask = (1ULL << VIRTIO_NET_F_HOST_TSO4) |
 		(1ULL << VIRTIO_NET_F_HOST_TSO6);
 	if ((hw->guest_features & tso_mask) == tso_mask)
@@ -1669,3 +1886,4 @@ __rte_unused uint8_t is_rx)
 
 RTE_PMD_EXPORT_NAME(net_virtio, __COUNTER__);
 RTE_PMD_REGISTER_PCI_TABLE(net_virtio, pci_id_virtio_map);
+RTE_PMD_REGISTER_KMOD_DEP(net_virtio, "* igb_uio | uio_pci_generic | vfio");

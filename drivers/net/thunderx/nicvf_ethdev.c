@@ -1335,8 +1335,11 @@ static void
 nicvf_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct nicvf *nic = nicvf_pmd_priv(dev);
+	struct rte_pci_device *pci_dev = RTE_DEV_TO_PCI(dev->device);
 
 	PMD_INIT_FUNC_TRACE();
+
+	dev_info->pci_dev = RTE_DEV_TO_PCI(dev->device);
 
 	dev_info->min_rx_bufsize = ETHER_MIN_MTU;
 	dev_info->max_rx_pktlen = NIC_HW_MAX_FRS;
@@ -1345,7 +1348,7 @@ nicvf_dev_info_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->max_tx_queues =
 			(uint16_t)MAX_SND_QUEUES_PER_QS * (MAX_SQS_PER_VF + 1);
 	dev_info->max_mac_addrs = 1;
-	dev_info->max_vfs = dev->pci_dev->max_vfs;
+	dev_info->max_vfs = pci_dev->max_vfs;
 
 	dev_info->rx_offload_capa = DEV_RX_OFFLOAD_VLAN_STRIP;
 	dev_info->tx_offload_capa =
@@ -1975,7 +1978,7 @@ nicvf_eth_dev_init(struct rte_eth_dev *eth_dev)
 		}
 	}
 
-	pci_dev = eth_dev->pci_dev;
+	pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
 	rte_eth_copy_pci_info(eth_dev, pci_dev);
 
 	nic->device_id = pci_dev->id.device_id;
@@ -2121,3 +2124,4 @@ static struct eth_driver rte_nicvf_pmd = {
 
 RTE_PMD_REGISTER_PCI(net_thunderx, rte_nicvf_pmd.pci_drv);
 RTE_PMD_REGISTER_PCI_TABLE(net_thunderx, pci_id_nicvf_map);
+RTE_PMD_REGISTER_KMOD_DEP(net_thunderx, "* igb_uio | uio_pci_generic | vfio");

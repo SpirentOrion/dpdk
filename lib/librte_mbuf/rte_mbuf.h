@@ -182,6 +182,12 @@ extern "C" {
 /* add new TX flags here */
 
 /**
+ * Offload the MACsec. This flag must be set by the application to enable
+ * this offload feature for a packet to be transmitted.
+ */
+#define PKT_TX_MACSEC        (1ULL << 44)
+
+/**
  * Bits 45:48 used for the tunnel type.
  * When doing Tx offload like TSO or checksum, the HW needs to configure the
  * tunnel type into the HW descriptors.
@@ -282,6 +288,21 @@ extern "C" {
  * header of the tunneled packet is an IPv6 packet.
  */
 #define PKT_TX_OUTER_IPV6    (1ULL << 60)
+
+/**
+ * Bitmask of all supported packet Tx offload features flags,
+ * which can be set for packet.
+ */
+#define PKT_TX_OFFLOAD_MASK (    \
+		PKT_TX_IP_CKSUM |        \
+		PKT_TX_L4_MASK |         \
+		PKT_TX_OUTER_IP_CKSUM |  \
+		PKT_TX_TCP_SEG |         \
+		PKT_TX_IEEE1588_TMST |	 \
+		PKT_TX_QINQ_PKT |        \
+		PKT_TX_VLAN_PKT |        \
+		PKT_TX_TUNNEL_MASK |	 \
+		PKT_TX_MACSEC)
 
 #define __RESERVED           (1ULL << 61) /**< reserved for future mbuf use */
 
@@ -1139,7 +1160,6 @@ static inline void rte_pktmbuf_attach(struct rte_mbuf *mi, struct rte_mbuf *m)
 	mi->buf_addr = m->buf_addr;
 	mi->buf_len = m->buf_len;
 
-	mi->next = m->next;
 	mi->data_off = m->data_off;
 	mi->data_len = m->data_len;
 	mi->port = m->port;
@@ -1642,6 +1662,108 @@ static inline int rte_pktmbuf_chain(struct rte_mbuf *head, struct rte_mbuf *tail
 
 	/* pkt_len is only set in the head */
 	tail->pkt_len = tail->data_len;
+
+	return 0;
+}
+
+/**
+ * Validate general requirements for Tx offload in mbuf.
+ *
+ * This function checks correctness and completeness of Tx offload settings.
+ *
+ * @param m
+ *   The packet mbuf to be validated.
+ * @return
+ *   0 if packet is valid
+ */
+static inline int
+rte_validate_tx_offload(const struct rte_mbuf *m)
+{
+	uint64_t ol_flags = m->ol_flags;
+	uint64_t inner_l3_offset = m->l2_len;
+
+	/* Does packet set any of available offloads? */
+	if (!(ol_flags & PKT_TX_OFFLOAD_MASK))
+		return 0;
+
+	if (ol_flags & PKT_TX_OUTER_IP_CKSUM)
+		inner_l3_offset += m->outer_l2_len + m->outer_l3_len;
+
+	/* Headers are fragmented */
+	if (rte_pktmbuf_data_len(m) < inner_l3_offset + m->l3_len + m->l4_len)
+		return -ENOTSUP;
+
+	/* IP checksum can be counted only for IPv4 packet */
+	if ((ol_flags & PKT_TX_IP_CKSUM) && (ol_flags & PKT_TX_IPV6))
+		return -EINVAL;
+
+	/* IP type not set when required */
+	if (ol_flags & (PKT_TX_L4_MASK | PKT_TX_TCP_SEG))
+		if (!(ol_flags & (PKT_TX_IPV4 | PKT_TX_IPV6)))
+			return -EINVAL;
+
+	/* Check requirements for TSO packet */
+	if (ol_flags & PKT_TX_TCP_SEG)
+		if ((m->tso_segsz == 0) ||
+				((ol_flags & PKT_TX_IPV4) &&
+				!(ol_flags & PKT_TX_IP_CKSUM)))
+			return -EINVAL;
+
+	/* PKT_TX_OUTER_IP_CKSUM set for non outer IPv4 packet. */
+	if ((ol_flags & PKT_TX_OUTER_IP_CKSUM) &&
+			!(ol_flags & PKT_TX_OUTER_IPV4))
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
+ * Linearize data in mbuf.
+ *
+ * This function moves the mbuf data in the first segment if there is enough
+ * tailroom. The subsequent segments are unchained and freed.
+ *
+ * @param mbuf
+ *   mbuf to linearize
+ * @return
+ *   - 0, on success
+ *   - -1, on error
+ */
+static inline int
+rte_pktmbuf_linearize(struct rte_mbuf *mbuf)
+{
+	int seg_len, copy_len;
+	struct rte_mbuf *m;
+	struct rte_mbuf *m_next;
+	char *buffer;
+
+	if (rte_pktmbuf_is_contiguous(mbuf))
+		return 0;
+
+	/* Extend first segment to the total packet length */
+	copy_len = rte_pktmbuf_pkt_len(mbuf) - rte_pktmbuf_data_len(mbuf);
+
+	if (unlikely(copy_len > rte_pktmbuf_tailroom(mbuf)))
+		return -1;
+
+	buffer = rte_pktmbuf_mtod_offset(mbuf, char *, mbuf->data_len);
+	mbuf->data_len = (uint16_t)(mbuf->pkt_len);
+
+	/* Append data from next segments to the first one */
+	m = mbuf->next;
+	while (m != NULL) {
+		m_next = m->next;
+
+		seg_len = rte_pktmbuf_data_len(m);
+		rte_memcpy(buffer, rte_pktmbuf_mtod(m, char *), seg_len);
+		buffer += seg_len;
+
+		rte_pktmbuf_free_seg(m);
+		m = m_next;
+	}
+
+	mbuf->next = NULL;
+	mbuf->nb_segs = 1;
 
 	return 0;
 }

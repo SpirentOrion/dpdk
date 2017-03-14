@@ -65,13 +65,15 @@ static void ecore_vf_pf_req_end(struct ecore_hwfn *p_hwfn,
 	OSAL_MUTEX_RELEASE(&p_hwfn->vf_iov_info->mutex);
 }
 
-static int ecore_send_msg2pf(struct ecore_hwfn *p_hwfn,
-			     u8 *done, u32 resp_size)
+static enum _ecore_status_t
+ecore_send_msg2pf(struct ecore_hwfn *p_hwfn,
+		  u8 *done, u32 resp_size)
 {
 	union vfpf_tlvs *p_req = p_hwfn->vf_iov_info->vf2pf_request;
 	struct ustorm_trigger_vf_zone trigger;
 	struct ustorm_vf_zone *zone_data;
-	int rc = ECORE_SUCCESS, time = 100;
+	enum _ecore_status_t rc = ECORE_SUCCESS;
+	int time = 100;
 
 	zone_data = (struct ustorm_vf_zone *)PXP_VF_BAR0_START_USDM_ZONE_B;
 
@@ -80,16 +82,6 @@ static int ecore_send_msg2pf(struct ecore_hwfn *p_hwfn,
 
 	/* need to add the END TLV to the message size */
 	resp_size += sizeof(struct channel_list_end_tlv);
-
-	if (!p_hwfn->p_dev->b_hw_channel) {
-		rc = OSAL_VF_SEND_MSG2PF(p_hwfn->p_dev,
-					 done,
-					 p_req,
-					 p_hwfn->vf_iov_info->pf2vf_reply,
-					 sizeof(union vfpf_tlvs), resp_size);
-		/* TODO - no prints about message ? */
-		return rc;
-	}
 
 	/* Send TLVs over HW channel */
 	OSAL_MEMSET(&trigger, 0, sizeof(struct ustorm_trigger_vf_zone));
@@ -294,8 +286,17 @@ static enum _ecore_status_t ecore_vf_pf_acquire(struct ecore_hwfn *p_hwfn)
 						" override\n");
 					req->vfdev_info.capabilities |=
 						VFPF_ACQUIRE_CAP_PRE_FP_HSI;
+					continue;
 				}
 			}
+
+			/* If PF/VF are using same Major, PF must have had
+			 * it's reasons. Simply fail.
+			 */
+			DP_NOTICE(p_hwfn, false,
+				  "PF rejected acquisition by VF\n");
+			rc = ECORE_INVAL;
+			goto exit;
 		} else {
 			DP_ERR(p_hwfn,
 			       "PF returned err %d to VF acquisition request\n",
@@ -466,7 +467,7 @@ enum _ecore_status_t ecore_vf_pf_rxq_start(struct ecore_hwfn *p_hwfn,
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_start_queue_resp_tlv *resp;
 	struct vfpf_start_rxq_tlv *req;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_START_RXQ, sizeof(*req));
@@ -541,7 +542,7 @@ enum _ecore_status_t ecore_vf_pf_rxq_stop(struct ecore_hwfn *p_hwfn,
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct vfpf_stop_rxqs_tlv *req;
 	struct pfvf_def_resp_tlv *resp;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_STOP_RXQS, sizeof(*req));
@@ -582,7 +583,7 @@ enum _ecore_status_t ecore_vf_pf_txq_start(struct ecore_hwfn *p_hwfn,
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_start_queue_resp_tlv *resp;
 	struct vfpf_start_txq_tlv *req;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_START_TXQ, sizeof(*req));
@@ -640,7 +641,7 @@ enum _ecore_status_t ecore_vf_pf_txq_stop(struct ecore_hwfn *p_hwfn, u16 tx_qid)
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct vfpf_stop_txqs_tlv *req;
 	struct pfvf_def_resp_tlv *resp;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_STOP_TXQS, sizeof(*req));
@@ -677,7 +678,7 @@ enum _ecore_status_t ecore_vf_pf_rxqs_update(struct ecore_hwfn *p_hwfn,
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_def_resp_tlv *resp = &p_iov->pf2vf_reply->default_resp;
 	struct vfpf_update_rxq_tlv *req;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_UPDATE_RXQ, sizeof(*req));
@@ -719,7 +720,8 @@ ecore_vf_pf_vport_start(struct ecore_hwfn *p_hwfn, u8 vport_id,
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct vfpf_vport_start_tlv *req;
 	struct pfvf_def_resp_tlv *resp;
-	int rc, i;
+	enum _ecore_status_t rc;
+	int i;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_VPORT_START, sizeof(*req));
@@ -761,7 +763,7 @@ enum _ecore_status_t ecore_vf_pf_vport_stop(struct ecore_hwfn *p_hwfn)
 {
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_def_resp_tlv *resp = &p_iov->pf2vf_reply->default_resp;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_VPORT_TEARDOWN,
@@ -859,7 +861,7 @@ ecore_vf_pf_vport_update(struct ecore_hwfn *p_hwfn,
 	u8 update_rx, update_tx;
 	u32 resp_size = 0;
 	u16 size, tlv;
-	int rc;
+	enum _ecore_status_t rc;
 
 	resp = &p_iov->pf2vf_reply->default_resp;
 	resp_size = sizeof(*resp);
@@ -1067,7 +1069,7 @@ enum _ecore_status_t ecore_vf_pf_reset(struct ecore_hwfn *p_hwfn)
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_def_resp_tlv *resp;
 	struct vfpf_first_tlv *req;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_CLOSE, sizeof(*req));
@@ -1100,8 +1102,8 @@ enum _ecore_status_t ecore_vf_pf_release(struct ecore_hwfn *p_hwfn)
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_def_resp_tlv *resp;
 	struct vfpf_first_tlv *req;
+	enum _ecore_status_t rc;
 	u32 size;
-	int rc;
 
 	/* clear mailbox and prep first tlv */
 	req = ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_RELEASE, sizeof(*req));
@@ -1173,7 +1175,7 @@ enum _ecore_status_t ecore_vf_pf_filter_ucast(struct ecore_hwfn *p_hwfn,
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct vfpf_ucast_filter_tlv *req;
 	struct pfvf_def_resp_tlv *resp;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* Sanitize */
 	if (p_ucast->opcode == ECORE_FILTER_MOVE) {
@@ -1214,7 +1216,7 @@ enum _ecore_status_t ecore_vf_pf_int_cleanup(struct ecore_hwfn *p_hwfn)
 {
 	struct ecore_vf_iov *p_iov = p_hwfn->vf_iov_info;
 	struct pfvf_def_resp_tlv *resp = &p_iov->pf2vf_reply->default_resp;
-	int rc;
+	enum _ecore_status_t rc;
 
 	/* clear mailbox and prep first tlv */
 	ecore_vf_pf_prep(p_hwfn, CHANNEL_TLV_INT_CLEANUP,

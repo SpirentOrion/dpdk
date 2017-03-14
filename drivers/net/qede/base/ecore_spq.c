@@ -248,7 +248,8 @@ static enum _ecore_status_t ecore_spq_hw_post(struct ecore_hwfn *p_hwfn,
 	/* make sure the SPQE is updated before the doorbell */
 	OSAL_WMB(p_hwfn->p_dev);
 
-	DOORBELL(p_hwfn, DB_ADDR(p_spq->cid, DQ_DEMS_LEGACY), *(u32 *)&db);
+	DOORBELL(p_hwfn, DB_ADDR(p_spq->cid, DQ_DEMS_LEGACY),
+		 *(u32 *)&db);
 
 	/* make sure doorbell is rang */
 	OSAL_WMB(p_hwfn->p_dev);
@@ -373,14 +374,14 @@ struct ecore_eq *ecore_eq_alloc(struct ecore_hwfn *p_hwfn, u16 num_elem)
 			      ECORE_CHAIN_MODE_PBL,
 			      ECORE_CHAIN_CNT_TYPE_U16,
 			      num_elem,
-			      sizeof(union event_ring_element), &p_eq->chain)) {
+			      sizeof(union event_ring_element),
+			      &p_eq->chain, OSAL_NULL)) {
 		DP_NOTICE(p_hwfn, true, "Failed to allocate eq chain\n");
 		goto eq_allocate_fail;
 	}
 
 	/* register EQ completion on the SP SB */
-	ecore_int_register_cb(p_hwfn,
-			      ecore_eq_completion,
+	ecore_int_register_cb(p_hwfn, ecore_eq_completion,
 			      p_eq, &p_eq->eq_sb_index, &p_eq->p_fw_cons);
 
 	return p_eq;
@@ -501,10 +502,13 @@ enum _ecore_status_t ecore_spq_alloc(struct ecore_hwfn *p_hwfn)
 	}
 
 	/* SPQ ring  */
-	if (ecore_chain_alloc(p_hwfn->p_dev, ECORE_CHAIN_USE_TO_PRODUCE,
-			ECORE_CHAIN_MODE_SINGLE, ECORE_CHAIN_CNT_TYPE_U16, 0,
-			/* N/A when the mode is SINGLE */
-			sizeof(struct slow_path_element), &p_spq->chain)) {
+	if (ecore_chain_alloc(p_hwfn->p_dev,
+			      ECORE_CHAIN_USE_TO_PRODUCE,
+			      ECORE_CHAIN_MODE_SINGLE,
+			      ECORE_CHAIN_CNT_TYPE_U16,
+			      0, /* N/A when the mode is SINGLE */
+			      sizeof(struct slow_path_element),
+			      &p_spq->chain, OSAL_NULL)) {
 		DP_NOTICE(p_hwfn, true, "Failed to allocate spq chain\n");
 		goto spq_allocate_fail;
 	}
@@ -920,6 +924,9 @@ enum _ecore_status_t ecore_spq_completion(struct ecore_hwfn *p_hwfn,
 	if (found->comp_cb.function)
 		found->comp_cb.function(p_hwfn, found->comp_cb.cookie, p_data,
 					fw_return_code);
+	else
+		DP_VERBOSE(p_hwfn, ECORE_MSG_SPQ,
+			   "Got a completion without a callback function\n");
 
 	if ((found->comp_mode != ECORE_SPQ_MODE_EBLOCK) ||
 	    (found->queue == &p_spq->unlimited_pending))
@@ -956,7 +963,8 @@ struct ecore_consq *ecore_consq_alloc(struct ecore_hwfn *p_hwfn)
 			      ECORE_CHAIN_MODE_PBL,
 			      ECORE_CHAIN_CNT_TYPE_U16,
 			      ECORE_CHAIN_PAGE_SIZE / 0x80,
-			      0x80, &p_consq->chain)) {
+			      0x80,
+			      &p_consq->chain, OSAL_NULL)) {
 		DP_NOTICE(p_hwfn, true, "Failed to allocate consq chain");
 		goto consq_allocate_fail;
 	}

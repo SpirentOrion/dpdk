@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2015 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -50,6 +50,8 @@
 #include <rte_tcp.h>
 #include <rte_sctp.h>
 #include <rte_udp.h>
+#include <rte_ip.h>
+#include <rte_net.h>
 
 #include "i40e_logs.h"
 #include "base/i40e_prototype.h"
@@ -73,11 +75,30 @@
 
 #define I40E_TXD_CMD (I40E_TX_DESC_CMD_EOP | I40E_TX_DESC_CMD_RS)
 
+#ifdef RTE_LIBRTE_IEEE1588
+#define I40E_TX_IEEE1588_TMST PKT_TX_IEEE1588_TMST
+#else
+#define I40E_TX_IEEE1588_TMST 0
+#endif
+
 #define I40E_TX_CKSUM_OFFLOAD_MASK (		 \
 		PKT_TX_IP_CKSUM |		 \
 		PKT_TX_L4_MASK |		 \
 		PKT_TX_TCP_SEG |		 \
 		PKT_TX_OUTER_IP_CKSUM)
+
+#define I40E_TX_OFFLOAD_MASK (  \
+		PKT_TX_IP_CKSUM |       \
+		PKT_TX_L4_MASK |        \
+		PKT_TX_OUTER_IP_CKSUM | \
+		PKT_TX_TCP_SEG |        \
+		PKT_TX_QINQ_PKT |       \
+		PKT_TX_VLAN_PKT |	\
+		PKT_TX_TUNNEL_MASK |	\
+		I40E_TX_IEEE1588_TMST)
+
+#define I40E_TX_OFFLOAD_NOTSUP_MASK \
+		(PKT_TX_OFFLOAD_MASK ^ I40E_TX_OFFLOAD_MASK)
 
 static uint16_t i40e_xmit_pkts_simple(void *tx_queue,
 				      struct rte_mbuf **tx_pkts,
@@ -138,8 +159,11 @@ i40e_rxd_error_to_pkt_flags(uint64_t qword)
 	uint64_t error_bits = (qword >> I40E_RXD_QW1_ERROR_SHIFT);
 
 #define I40E_RX_ERR_BITS 0x3f
-	if (likely((error_bits & I40E_RX_ERR_BITS) == 0))
+	if (likely((error_bits & I40E_RX_ERR_BITS) == 0)) {
+		flags |= (PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_GOOD);
 		return flags;
+	}
+
 	if (unlikely(error_bits & (1 << I40E_RX_DESC_ERROR_IPE_SHIFT)))
 		flags |= PKT_RX_IP_CKSUM_BAD;
 	else
@@ -253,7 +277,7 @@ i40e_parse_tunneling_params(uint64_t ol_flags,
 		*cd_tunneling |= I40E_TXD_CTX_GRE_TUNNELING;
 		break;
 	default:
-		PMD_TX_LOG(ERR, "Tunnel type not supported\n");
+		PMD_TX_LOG(ERR, "Tunnel type not supported");
 		return;
 	}
 
@@ -408,15 +432,6 @@ check_rx_burst_bulk_alloc_preconditions(__rte_unused struct i40e_rx_queue *rxq)
 			     "rxq->nb_rx_desc=%d, "
 			     "rxq->rx_free_thresh=%d",
 			     rxq->nb_rx_desc, rxq->rx_free_thresh);
-		ret = -EINVAL;
-	} else if (!(rxq->nb_rx_desc < (I40E_MAX_RING_DESC -
-				RTE_PMD_I40E_RX_MAX_BURST))) {
-		PMD_INIT_LOG(DEBUG, "Rx Burst Bulk Alloc Preconditions: "
-			     "rxq->nb_rx_desc=%d, "
-			     "I40E_MAX_RING_DESC=%d, "
-			     "RTE_PMD_I40E_RX_MAX_BURST=%d",
-			     rxq->nb_rx_desc, I40E_MAX_RING_DESC,
-			     RTE_PMD_I40E_RX_MAX_BURST);
 		ret = -EINVAL;
 	}
 #else
@@ -581,7 +596,7 @@ i40e_rx_alloc_bufs(struct i40e_rx_queue *rxq)
 
 	/* Update rx tail regsiter */
 	rte_wmb();
-	I40E_PCI_REG_WRITE(rxq->qrx_tail, rxq->rx_free_trigger);
+	I40E_PCI_REG_WRITE_RELAXED(rxq->qrx_tail, rxq->rx_free_trigger);
 
 	rxq->rx_free_trigger =
 		(uint16_t)(rxq->rx_free_trigger + rxq->rx_free_thresh);
@@ -1228,7 +1243,7 @@ end_of_tx:
 		   (unsigned) txq->port_id, (unsigned) txq->queue_id,
 		   (unsigned) tx_id, (unsigned) nb_tx);
 
-	I40E_PCI_REG_WRITE(txq->qtx_tail, tx_id);
+	I40E_PCI_REG_WRITE_RELAXED(txq->qtx_tail, tx_id);
 	txq->tx_tail = tx_id;
 
 	return nb_tx;
@@ -1380,7 +1395,7 @@ tx_xmit_pkts(struct i40e_tx_queue *txq,
 
 	/* Update the tx tail register */
 	rte_wmb();
-	I40E_PCI_REG_WRITE(txq->qtx_tail, txq->tx_tail);
+	I40E_PCI_REG_WRITE_RELAXED(txq->qtx_tail, txq->tx_tail);
 
 	return nb_pkts;
 }
@@ -1409,6 +1424,63 @@ i40e_xmit_pkts_simple(void *tx_queue,
 	}
 
 	return nb_tx;
+}
+
+/*********************************************************************
+ *
+ *  TX prep functions
+ *
+ **********************************************************************/
+uint16_t
+i40e_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts)
+{
+	int i, ret;
+	uint64_t ol_flags;
+	struct rte_mbuf *m;
+
+	for (i = 0; i < nb_pkts; i++) {
+		m = tx_pkts[i];
+		ol_flags = m->ol_flags;
+
+		/**
+		 * m->nb_segs is uint8_t, so nb_segs is always less than
+		 * I40E_TX_MAX_SEG.
+		 * We check only a condition for nb_segs > I40E_TX_MAX_MTU_SEG.
+		 */
+		if (!(ol_flags & PKT_TX_TCP_SEG)) {
+			if (m->nb_segs > I40E_TX_MAX_MTU_SEG) {
+				rte_errno = -EINVAL;
+				return i;
+			}
+		} else if ((m->tso_segsz < I40E_MIN_TSO_MSS) ||
+				(m->tso_segsz > I40E_MAX_TSO_MSS)) {
+			/* MSS outside the range (256B - 9674B) are considered
+			 * malicious
+			 */
+			rte_errno = -EINVAL;
+			return i;
+		}
+
+		if (ol_flags & I40E_TX_OFFLOAD_NOTSUP_MASK) {
+			rte_errno = -ENOTSUP;
+			return i;
+		}
+
+#ifdef RTE_LIBRTE_ETHDEV_DEBUG
+		ret = rte_validate_tx_offload(m);
+		if (ret != 0) {
+			rte_errno = ret;
+			return i;
+		}
+#endif
+		ret = rte_net_intel_cksum_prepare(m);
+		if (ret != 0) {
+			rte_errno = ret;
+			return i;
+		}
+	}
+	return i;
 }
 
 /*
@@ -1698,8 +1770,19 @@ i40e_dev_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->rx_deferred_start = rx_conf->rx_deferred_start;
 
 	/* Allocate the maximun number of RX ring hardware descriptor. */
-	ring_size = sizeof(union i40e_rx_desc) * I40E_MAX_RING_DESC;
-	ring_size = RTE_ALIGN(ring_size, I40E_DMA_MEM_ALIGN);
+	len = I40E_MAX_RING_DESC;
+
+#ifdef RTE_LIBRTE_I40E_RX_ALLOW_BULK_ALLOC
+	/**
+	 * Allocating a little more memory because vectorized/bulk_alloc Rx
+	 * functions doesn't check boundaries each time.
+	 */
+	len += RTE_PMD_I40E_RX_MAX_BURST;
+#endif
+
+	ring_size = RTE_ALIGN(len * sizeof(union i40e_rx_desc),
+			      I40E_DMA_MEM_ALIGN);
+
 	rz = rte_eth_dma_zone_reserve(dev, "rx_ring", queue_idx,
 			      ring_size, I40E_RING_BASE_ALIGN, socket_id);
 	if (!rz) {
@@ -1916,8 +1999,7 @@ i40e_dev_tx_queue_setup(struct rte_eth_dev *dev,
 		return I40E_ERR_PARAM;
 	}
 	if (tx_free_thresh >= (nb_desc - 3)) {
-		PMD_INIT_LOG(ERR, "tx_rs_thresh must be less than the "
-			     "tx_free_thresh must be less than the "
+		PMD_INIT_LOG(ERR, "tx_free_thresh must be less than the "
 			     "number of TX descriptors minus 3. "
 			     "(tx_free_thresh=%u port=%d queue=%d)",
 			     (unsigned int)tx_free_thresh,
@@ -2763,9 +2845,11 @@ i40e_set_tx_function(struct rte_eth_dev *dev)
 			PMD_INIT_LOG(DEBUG, "Simple tx finally be used.");
 			dev->tx_pkt_burst = i40e_xmit_pkts_simple;
 		}
+		dev->tx_pkt_prepare = NULL;
 	} else {
 		PMD_INIT_LOG(DEBUG, "Xmit tx finally be used.");
 		dev->tx_pkt_burst = i40e_xmit_pkts;
+		dev->tx_pkt_prepare = i40e_prep_pkts;
 	}
 }
 

@@ -107,7 +107,7 @@ namespace rte {
 	 */
 	class intr_source {
 	public:
-		intr_source(struct rte_intr_handle *handle)
+		intr_source(const struct rte_intr_handle *handle)
 			: _active(false), _handle(handle) {};
 		virtual ~intr_source() {};
 
@@ -123,7 +123,7 @@ namespace rte {
 		};
 
 		std::atomic_bool _active;
-		struct rte_intr_handle *_handle;
+		const struct rte_intr_handle *_handle;
 		std::vector<rte_intr_callback *> _callbacks;
 		mutex _lock;
 	};

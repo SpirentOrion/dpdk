@@ -18,6 +18,7 @@
 #include <rte_cycles.h>
 #include <rte_debug.h>
 #include <rte_ether.h>
+#include <rte_io.h>
 
 /* Forward declaration */
 struct ecore_dev;
@@ -113,18 +114,18 @@ void *osal_dma_alloc_coherent_aligned(struct ecore_dev *, dma_addr_t *,
 
 /* HW reads/writes */
 
-#define DIRECT_REG_RD(_dev, _reg_addr) \
-	(*((volatile u32 *) (_reg_addr)))
+#define DIRECT_REG_RD(_dev, _reg_addr) rte_read32(_reg_addr)
 
 #define REG_RD(_p_hwfn, _reg_offset) \
 	DIRECT_REG_RD(_p_hwfn,		\
 			((u8 *)(uintptr_t)(_p_hwfn->regview) + (_reg_offset)))
 
-#define DIRECT_REG_WR16(_reg_addr, _val) \
-	(*((volatile u16 *)(_reg_addr)) = _val)
+#define DIRECT_REG_WR16(_reg_addr, _val) rte_write16((_val), (_reg_addr))
 
-#define DIRECT_REG_WR(_dev, _reg_addr, _val) \
-	(*((volatile u32 *)(_reg_addr)) = _val)
+#define DIRECT_REG_WR(_dev, _reg_addr, _val) rte_write32((_val), (_reg_addr))
+
+#define DIRECT_REG_WR_RELAXED(_dev, _reg_addr, _val) \
+	rte_write32_relaxed((_val), (_reg_addr))
 
 #define REG_WR(_p_hwfn, _reg_offset, _val) \
 	DIRECT_REG_WR(NULL,  \
@@ -134,9 +135,10 @@ void *osal_dma_alloc_coherent_aligned(struct ecore_dev *, dma_addr_t *,
 	DIRECT_REG_WR16(((u8 *)(uintptr_t)(_p_hwfn->regview) + \
 			(_reg_offset)), (u16)_val)
 
-#define DOORBELL(_p_hwfn, _db_addr, _val) \
-	DIRECT_REG_WR(_p_hwfn, \
-	     ((u8 *)(uintptr_t)(_p_hwfn->doorbells) + (_db_addr)), (u32)_val)
+#define DOORBELL(_p_hwfn, _db_addr, _val)				\
+	DIRECT_REG_WR_RELAXED((_p_hwfn),				\
+			      ((u8 *)(uintptr_t)(_p_hwfn->doorbells) +	\
+			      (_db_addr)), (u32)_val)
 
 /* Mutexes */
 
@@ -323,6 +325,7 @@ u32 qede_find_first_zero_bit(unsigned long *, u32);
 #define OSAL_VF_SEND_MSG2PF(dev, done, msg, reply_addr, msg_size, reply_size) 0
 #define OSAL_VF_CQE_COMPLETION(_dev_p, _cqe, _protocol)	(0)
 #define OSAL_PF_VF_MSG(hwfn, vfid) 0
+#define OSAL_PF_VF_MALICIOUS(hwfn, vfid) nothing
 #define OSAL_IOV_CHK_UCAST(hwfn, vfid, params) 0
 #define OSAL_IOV_POST_START_VPORT(hwfn, vf, vport_id, opaque_fid) nothing
 #define OSAL_IOV_VF_ACQUIRE(hwfn, vfid) 0

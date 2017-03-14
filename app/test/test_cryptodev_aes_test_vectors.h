@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2016-2017 Intel Corporation. All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -825,6 +825,98 @@ static const struct blockcipher_test_data aes_test_data_11 = {
 	}
 };
 
+/** AES-128-CBC SHA256 HMAC test vector (160 bytes) */
+static const struct blockcipher_test_data aes_test_data_12 = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_AES_CBC,
+	.cipher_key = {
+		.data = {
+			0xE4, 0x23, 0x33, 0x8A, 0x35, 0x64, 0x61, 0xE2,
+			0x49, 0x03, 0xDD, 0xC6, 0xB8, 0xCA, 0x55, 0x7A
+		},
+		.len = 16
+	},
+	.iv = {
+		.data = {
+			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+			0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes_common,
+		.len = 160
+	},
+	.ciphertext = {
+		.data = ciphertext512_aes128cbc,
+		.len = 160
+	},
+	.auth_algo = RTE_CRYPTO_AUTH_SHA256_HMAC,
+	.auth_key = {
+		.data = {
+			0x42, 0x1A, 0x7D, 0x3D, 0xF5, 0x82, 0x80, 0xF1,
+			0xF1, 0x35, 0x5C, 0x3B, 0xDD, 0x9A, 0x65, 0xBA,
+			0x58, 0x34, 0x85, 0x61, 0x1C, 0x42, 0x10, 0x76,
+			0x9A, 0x4F, 0x88, 0x1B, 0xB6, 0x8F, 0xD8, 0x60
+		},
+		.len = 32
+	},
+	.digest = {
+		.data = {
+			0x92, 0xEC, 0x65, 0x9A, 0x52, 0xCC, 0x50, 0xA5,
+			0xEE, 0x0E, 0xDF, 0x1E, 0xA4, 0xC9, 0xC1, 0x04,
+			0xD5, 0xDC, 0x78, 0x90, 0xF4, 0xE3, 0x35, 0x62,
+			0xAD, 0x95, 0x45, 0x28, 0x5C, 0xF8, 0x8C, 0x0B
+		},
+		.len = 32,
+		.truncated_len = 16
+	}
+};
+
+/** AES-128-CBC SHA1 HMAC test vector (160 bytes) */
+static const struct blockcipher_test_data aes_test_data_13 = {
+	.crypto_algo = RTE_CRYPTO_CIPHER_AES_CBC,
+	.cipher_key = {
+		.data = {
+			0xE4, 0x23, 0x33, 0x8A, 0x35, 0x64, 0x61, 0xE2,
+			0x49, 0x03, 0xDD, 0xC6, 0xB8, 0xCA, 0x55, 0x7A
+		},
+		.len = 16
+	},
+	.iv = {
+		.data = {
+			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+			0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
+		},
+		.len = 16
+	},
+	.plaintext = {
+		.data = plaintext_aes_common,
+		.len = 160
+	},
+	.ciphertext = {
+		.data = ciphertext512_aes128cbc,
+		.len = 160
+	},
+	.auth_algo = RTE_CRYPTO_AUTH_SHA1_HMAC,
+	.auth_key = {
+		.data = {
+			0xF8, 0x2A, 0xC7, 0x54, 0xDB, 0x96, 0x18, 0xAA,
+			0xC3, 0xA1, 0x53, 0xF6, 0x1F, 0x17, 0x60, 0xBD,
+			0xDE, 0xF4, 0xDE, 0xAD
+		},
+		.len = 20
+	},
+	.digest = {
+		.data = {
+			0x4F, 0x16, 0xEA, 0xF7, 0x4A, 0x88, 0xD3, 0xE0,
+			0x0E, 0x12, 0x8B, 0xE7, 0x05, 0xD0, 0x86, 0x48,
+			0x22, 0x43, 0x30, 0xA7
+		},
+		.len = 20,
+		.truncated_len = 12
+	}
+};
+
 static const struct blockcipher_test_case aes_chain_test_cases[] = {
 	{
 		.test_descr = "AES-128-CTR HMAC-SHA1 Encryption Digest",
@@ -832,7 +924,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CTR HMAC-SHA1 Decryption Digest "
@@ -841,21 +934,35 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-192-CTR XCBC Encryption Digest",
 		.test_data = &aes_test_data_2,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-192-CTR XCBC Decryption Digest Verify",
 		.test_data = &aes_test_data_2,
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
+	},
+	{
+		.test_descr = "AES-192-CTR XCBC Decryption Digest Verify "
+				"Scatter Gather",
+		.test_data = &aes_test_data_2,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_SG |
+			BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-256-CTR HMAC-SHA1 Encryption Digest",
@@ -863,7 +970,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-256-CTR HMAC-SHA1 Decryption Digest "
@@ -872,41 +980,90 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA1 Encryption Digest",
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
+	},
+	{
+		.test_descr = "AES-128-CBC HMAC-SHA1 Encryption Digest "
+			"(short buffers)",
+		.test_data = &aes_test_data_13,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8
+	},
+	{
+		.test_descr = "AES-128-CBC HMAC-SHA1 Encryption Digest "
+				"Scatter Gather",
+		.test_data = &aes_test_data_4,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_SG |
+			BLOCKCIPHER_TEST_FEATURE_OOP,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA1 Decryption Digest "
 			"Verify",
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
+	},
+	{
+		.test_descr = "AES-128-CBC HMAC-SHA1 Decryption Digest "
+			"Verify (short buffers)",
+		.test_data = &aes_test_data_13,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA256 Encryption Digest",
 		.test_data = &aes_test_data_5,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
+	},
+	{
+		.test_descr = "AES-128-CBC HMAC-SHA256 Encryption Digest "
+			"(short buffers)",
+		.test_data = &aes_test_data_12,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA256 Decryption Digest "
 			"Verify",
 		.test_data = &aes_test_data_5,
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
+	},
+	{
+		.test_descr = "AES-128-CBC HMAC-SHA256 Decryption Digest "
+			"Verify (short buffers)",
+		.test_data = &aes_test_data_12,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA512 Encryption Digest",
@@ -914,7 +1071,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA512 Encryption Digest "
@@ -926,27 +1084,53 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
 	},
 	{
+		.test_descr = "AES-128-CBC HMAC-SHA512 Encryption Digest "
+				"Scatter Gather Sessionless",
+		.test_data = &aes_test_data_6,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_SESSIONLESS |
+			BLOCKCIPHER_TEST_FEATURE_SG |
+			BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+	},
+	{
 		.test_descr = "AES-128-CBC HMAC-SHA512 Decryption Digest "
 			"Verify",
 		.test_data = &aes_test_data_6,
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
+	},
+	{
+		.test_descr = "AES-128-CBC HMAC-SHA512 Decryption Digest "
+			"Verify Scatter Gather",
+		.test_data = &aes_test_data_6,
+		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_SG |
+			BLOCKCIPHER_TEST_FEATURE_OOP,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC XCBC Encryption Digest",
 		.test_data = &aes_test_data_7,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC XCBC Decryption Digest Verify",
 		.test_data = &aes_test_data_7,
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA1 Encryption Digest "
@@ -954,7 +1138,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
 	},
 	{
@@ -963,7 +1148,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_OOP,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
 	},
 	{
@@ -972,7 +1158,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA224 Decryption Digest "
@@ -981,7 +1168,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA384 Encryption Digest",
@@ -989,7 +1177,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA384 Decryption Digest "
@@ -998,7 +1187,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB |
 			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
-			BLOCKCIPHER_TEST_TARGET_PMD_QAT
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC HMAC-SHA1 Encryption Digest "
@@ -1006,7 +1196,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENC_AUTH_GEN,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_SESSIONLESS,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
 	},
 	{
 		.test_descr =
@@ -1015,7 +1206,8 @@ static const struct blockcipher_test_case aes_chain_test_cases[] = {
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_AUTH_VERIFY_DEC,
 		.feature_mask = BLOCKCIPHER_TEST_FEATURE_SESSIONLESS,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8 |
+			BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
 	},
 };
 
@@ -1024,73 +1216,117 @@ static const struct blockcipher_test_case aes_cipheronly_test_cases[] = {
 		.test_descr = "AES-128-CBC Encryption",
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CBC Decryption",
 		.test_data = &aes_test_data_4,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-192-CBC Encryption",
 		.test_data = &aes_test_data_10,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
+	},
+	{
+		.test_descr = "AES-192-CBC Encryption Scater gather",
+		.test_data = &aes_test_data_10,
+		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
+		.feature_mask = BLOCKCIPHER_TEST_FEATURE_SG |
+			BLOCKCIPHER_TEST_FEATURE_OOP,
 		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
 	},
 	{
 		.test_descr = "AES-192-CBC Decryption",
 		.test_data = &aes_test_data_10,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-256-CBC Encryption",
 		.test_data = &aes_test_data_11,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-256-CBC Decryption",
 		.test_data = &aes_test_data_11,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CTR Encryption",
 		.test_data = &aes_test_data_1,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-128-CTR Decryption",
 		.test_data = &aes_test_data_1,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-192-CTR Encryption",
 		.test_data = &aes_test_data_2,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-192-CTR Decryption",
 		.test_data = &aes_test_data_2,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-256-CTR Encryption",
 		.test_data = &aes_test_data_3,
 		.op_mask = BLOCKCIPHER_TEST_OP_ENCRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 	{
 		.test_descr = "AES-256-CTR Decryption",
 		.test_data = &aes_test_data_3,
 		.op_mask = BLOCKCIPHER_TEST_OP_DECRYPT,
-		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL
+		.pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL |
+			BLOCKCIPHER_TEST_TARGET_PMD_QAT |
+			BLOCKCIPHER_TEST_TARGET_PMD_MB |
+			BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER
 	},
 };
 

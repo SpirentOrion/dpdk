@@ -139,12 +139,10 @@ enum i40e_admin_queue_opc {
 	i40e_aqc_opc_list_func_capabilities	= 0x000A,
 	i40e_aqc_opc_list_dev_capabilities	= 0x000B,
 
-#ifdef X722_SUPPORT
 	/* Proxy commands */
 	i40e_aqc_opc_set_proxy_config		= 0x0104,
 	i40e_aqc_opc_set_ns_proxy_table_entry	= 0x0105,
 
-#endif
 	/* LAA */
 	i40e_aqc_opc_mac_address_read	= 0x0107,
 	i40e_aqc_opc_mac_address_write	= 0x0108,
@@ -152,12 +150,11 @@ enum i40e_admin_queue_opc {
 	/* PXE */
 	i40e_aqc_opc_clear_pxe_mode	= 0x0110,
 
-#ifdef X722_SUPPORT
 	/* WoL commands */
 	i40e_aqc_opc_set_wol_filter	= 0x0120,
 	i40e_aqc_opc_get_wake_reason	= 0x0121,
+	i40e_aqc_opc_clear_all_wol_filters = 0x025E,
 
-#endif
 	/* internal switch commands */
 	i40e_aqc_opc_get_switch_config		= 0x0200,
 	i40e_aqc_opc_add_statistics		= 0x0201,
@@ -282,12 +279,10 @@ enum i40e_admin_queue_opc {
 	/* Tunnel commands */
 	i40e_aqc_opc_add_udp_tunnel	= 0x0B00,
 	i40e_aqc_opc_del_udp_tunnel	= 0x0B01,
-#ifdef X722_SUPPORT
 	i40e_aqc_opc_set_rss_key	= 0x0B02,
 	i40e_aqc_opc_set_rss_lut	= 0x0B03,
 	i40e_aqc_opc_get_rss_key	= 0x0B04,
 	i40e_aqc_opc_get_rss_lut	= 0x0B05,
-#endif
 
 	/* Async Events */
 	i40e_aqc_opc_event_lan_overflow		= 0x1001,
@@ -540,7 +535,8 @@ struct i40e_aqc_mac_address_read {
 #define I40E_AQC_PORT_ADDR_VALID	0x40
 #define I40E_AQC_WOL_ADDR_VALID		0x80
 #define I40E_AQC_MC_MAG_EN_VALID	0x100
-#define I40E_AQC_ADDR_VALID_MASK	0x1F0
+#define I40E_AQC_WOL_PRESERVE_STATUS	0x200
+#define I40E_AQC_ADDR_VALID_MASK	0x3F0
 	u8	reserved[6];
 	__le32	addr_high;
 	__le32	addr_low;
@@ -561,6 +557,7 @@ I40E_CHECK_STRUCT_LEN(24, i40e_aqc_mac_address_read_data);
 struct i40e_aqc_mac_address_write {
 	__le16	command_flags;
 #define I40E_AQC_MC_MAG_EN		0x0100
+#define I40E_AQC_WOL_PRESERVE_ON_PFR	0x0200
 #define I40E_AQC_WRITE_TYPE_LAA_ONLY	0x0000
 #define I40E_AQC_WRITE_TYPE_LAA_WOL	0x4000
 #define I40E_AQC_WRITE_TYPE_PORT	0x8000
@@ -584,7 +581,6 @@ struct i40e_aqc_clear_pxe {
 
 I40E_CHECK_CMD_LENGTH(i40e_aqc_clear_pxe);
 
-#ifdef X722_SUPPORT
 /* Set WoL Filter (0x0120) */
 
 struct i40e_aqc_set_wol_filter {
@@ -600,6 +596,7 @@ struct i40e_aqc_set_wol_filter {
 	__le16 cmd_flags;
 #define I40E_AQC_SET_WOL_FILTER				0x8000
 #define I40E_AQC_SET_WOL_FILTER_NO_TCO_WOL		0x4000
+#define I40E_AQC_SET_WOL_FILTER_WOL_PRESERVE_ON_PFR	0x2000
 #define I40E_AQC_SET_WOL_FILTER_ACTION_CLEAR		0
 #define I40E_AQC_SET_WOL_FILTER_ACTION_SET		1
 	__le16 valid_flags;
@@ -635,7 +632,6 @@ struct i40e_aqc_get_wake_reason_completion {
 
 I40E_CHECK_CMD_LENGTH(i40e_aqc_get_wake_reason_completion);
 
-#endif /* X722_SUPPORT */
 /* Switch configuration commands (0x02xx) */
 
 /* Used by many indirect commands that only pass an seid and a buffer in the
@@ -940,16 +936,12 @@ struct i40e_aqc_vsi_properties_data {
 					 I40E_AQ_VSI_TC_QUE_NUMBER_SHIFT)
 	/* queueing option section */
 	u8	queueing_opt_flags;
-#ifdef X722_SUPPORT
 #define I40E_AQ_VSI_QUE_OPT_MULTICAST_UDP_ENA	0x04
 #define I40E_AQ_VSI_QUE_OPT_UNICAST_UDP_ENA	0x08
-#endif
 #define I40E_AQ_VSI_QUE_OPT_TCP_ENA	0x10
 #define I40E_AQ_VSI_QUE_OPT_FCOE_ENA	0x20
-#ifdef X722_SUPPORT
 #define I40E_AQ_VSI_QUE_OPT_RSS_LUT_PF	0x00
 #define I40E_AQ_VSI_QUE_OPT_RSS_LUT_VSI	0x40
-#endif
 	u8	queueing_opt_reserved[3];
 	/* scheduler section */
 	u8	up_enable_bits;
@@ -1781,11 +1773,20 @@ struct i40e_aq_get_phy_abilities_resp {
 	u8	d3_lpan;
 #define I40E_AQ_SET_PHY_D3_LPAN_ENA	0x01
 	u8	phy_type_ext;
-#define I40E_AQ_PHY_TYPE_EXT_25G_KR	0X01
-#define I40E_AQ_PHY_TYPE_EXT_25G_CR	0X02
+#define I40E_AQ_PHY_TYPE_EXT_25G_KR	0x01
+#define I40E_AQ_PHY_TYPE_EXT_25G_CR	0x02
 #define I40E_AQ_PHY_TYPE_EXT_25G_SR	0x04
 #define I40E_AQ_PHY_TYPE_EXT_25G_LR	0x08
-	u8	mod_type_ext;
+	u8	fec_cfg_curr_mod_ext_info;
+#define I40E_AQ_ENABLE_FEC_KR		0x01
+#define I40E_AQ_ENABLE_FEC_RS		0x02
+#define I40E_AQ_REQUEST_FEC_KR		0x04
+#define I40E_AQ_REQUEST_FEC_RS		0x08
+#define I40E_AQ_ENABLE_FEC_AUTO		0x10
+#define I40E_AQ_FEC
+#define I40E_AQ_MODULE_TYPE_EXT_MASK	0xE0
+#define I40E_AQ_MODULE_TYPE_EXT_SHIFT	5
+
 	u8	ext_comp_code;
 	u8	phy_id[4];
 	u8	module_type[3];
@@ -1809,16 +1810,14 @@ struct i40e_aq_set_phy_config { /* same bits as above in all */
 	__le32	eeer;
 	u8	low_power_ctrl;
 	u8	phy_type_ext;
-#define I40E_AQ_PHY_TYPE_EXT_25G_KR	0X01
-#define I40E_AQ_PHY_TYPE_EXT_25G_CR	0X02
-#define I40E_AQ_PHY_TYPE_EXT_25G_SR	0x04
-#define I40E_AQ_PHY_TYPE_EXT_25G_LR	0x08
 	u8	fec_config;
-#define I40E_AQ_SET_FEC_ABILITY_KR	(1 << 0)
-#define I40E_AQ_SET_FEC_ABILITY_RS	(1 << 1)
-#define I40E_AQ_SET_FEC_REQUEST_KR	(1 << 2)
-#define I40E_AQ_SET_FEC_REQUEST_RS	(1 << 3)
-#define I40E_AQ_SET_FEC_AUTO		(1 << 4)
+#define I40E_AQ_SET_FEC_ABILITY_KR	BIT(0)
+#define I40E_AQ_SET_FEC_ABILITY_RS	BIT(1)
+#define I40E_AQ_SET_FEC_REQUEST_KR	BIT(2)
+#define I40E_AQ_SET_FEC_REQUEST_RS	BIT(3)
+#define I40E_AQ_SET_FEC_AUTO		BIT(4)
+#define I40E_AQ_PHY_FEC_CONFIG_SHIFT	0x0
+#define I40E_AQ_PHY_FEC_CONFIG_MASK	(0x1F << I40E_AQ_PHY_FEC_CONFIG_SHIFT)
 	u8	reserved;
 };
 
@@ -2416,7 +2415,6 @@ struct i40e_aqc_del_udp_tunnel_completion {
 };
 
 I40E_CHECK_CMD_LENGTH(i40e_aqc_del_udp_tunnel_completion);
-#ifdef X722_SUPPORT
 
 struct i40e_aqc_get_set_rss_key {
 #define I40E_AQC_SET_RSS_KEY_VSI_VALID		(0x1 << 15)
@@ -2457,7 +2455,6 @@ struct  i40e_aqc_get_set_rss_lut {
 };
 
 I40E_CHECK_CMD_LENGTH(i40e_aqc_get_set_rss_lut);
-#endif
 
 /* tunnel key structure 0x0B10 */
 

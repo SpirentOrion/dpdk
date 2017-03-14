@@ -28,9 +28,16 @@ enum ecore_rss_caps {
 #endif
 
 struct ecore_queue_start_common_params {
-	/* Rx/Tx queue id */
-	u8 queue_id;
+	/* Rx/Tx queue relative id to keep obtained cid in corresponding array
+	 * RX - upper-bounded by number of FW-queues
+	 */
+	u16 queue_id;
 	u8 vport_id;
+
+	/* q_zone_id is relative, may be different from queue id
+	 * currently used by Tx-only, upper-bounded by number of FW-queues
+	 */
+	u8 qzone_id;
 
 	/* stats_id is relative or absolute depends on function */
 	u8 stats_id;
@@ -89,6 +96,7 @@ enum ecore_filter_ucast_type {
 	ECORE_FILTER_INNER_MAC_VNI_PAIR,
 	ECORE_FILTER_MAC_VNI_PAIR,
 	ECORE_FILTER_VNI,
+	ECORE_FILTER_UNUSED, /* @DPDK */
 };
 
 struct ecore_filter_ucast {
@@ -273,6 +281,15 @@ struct ecore_sp_vport_start_params {
 	bool zero_placement_offset;
 	bool check_mac;
 	bool check_ethtype;
+
+	/* Strict behavior on transmission errors */
+	bool b_err_illegal_vlan_mode;
+	bool b_err_illegal_inband_mode;
+	bool b_err_vlan_insert_with_inband;
+	bool b_err_small_pkt;
+	bool b_err_big_pkt;
+	bool b_err_anti_spoof;
+	bool b_err_ctrl_frame;
 };
 
 /**

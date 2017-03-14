@@ -80,7 +80,7 @@ enum ecore_nvm_cmd {
 #define SET_FIELD(value, name, flag)					\
 do {									\
 	(value) &= ~(name##_MASK << name##_SHIFT);			\
-	(value) |= (((u64)flag) << (name##_SHIFT));			\
+	(value) |= ((((u64)flag) & (u64)name##_MASK) << (name##_SHIFT));\
 } while (0)
 
 #define GET_FIELD(value, name)						\
@@ -302,6 +302,7 @@ enum ecore_port_mode {
 	ECORE_PORT_MODE_DE_2X25G,
 	ECORE_PORT_MODE_DE_1X25G,
 	ECORE_PORT_MODE_DE_4X25G,
+	ECORE_PORT_MODE_DE_2X10G,
 };
 
 enum ecore_dev_cap {
@@ -372,6 +373,9 @@ struct ecore_hw_info {
 	u32 port_mode;
 	u32	hw_mode;
 	unsigned long device_capabilities;
+
+	/* Default DCBX mode */
+	u8 dcbx_mode;
 };
 
 struct ecore_hw_cid_data {
@@ -711,8 +715,6 @@ struct ecore_dev {
 	/* SRIOV */
 	struct ecore_hw_sriov_info	*p_iov_info;
 #define IS_ECORE_SRIOV(p_dev)		(!!(p_dev)->p_iov_info)
-	bool				b_hw_channel;
-
 	unsigned long			tunn_mode;
 
 	bool				b_is_vf;
@@ -766,15 +768,6 @@ struct ecore_dev {
 #define NUM_OF_ENG_PFS(dev)	(ECORE_IS_BB(dev) ? MAX_NUM_PFS_BB \
 						  : MAX_NUM_PFS_K2)
 
-#ifndef REAL_ASIC_ONLY
-#define ENABLE_EAGLE_ENG1_WORKAROUND(p_hwfn) ( \
-	(ECORE_IS_BB_A0(p_hwfn->p_dev)) && \
-	(ECORE_PATH_ID(p_hwfn) == 1) && \
-	((p_hwfn->hw_info.port_mode == ECORE_PORT_MODE_DE_2X40G) || \
-	 (p_hwfn->hw_info.port_mode == ECORE_PORT_MODE_DE_2X50G) || \
-	 (p_hwfn->hw_info.port_mode == ECORE_PORT_MODE_DE_2X25G)))
-#endif
-
 /**
  * @brief ecore_concrete_to_sw_fid - get the sw function id from
  *        the concrete value.
@@ -800,7 +793,7 @@ static OSAL_INLINE u8 ecore_concrete_to_sw_fid(struct ecore_dev *p_dev,
 }
 
 #define PURE_LB_TC 8
-#define OOO_LB_TC 9
+#define PKT_LB_TC 9
 
 int ecore_configure_vport_wfq(struct ecore_dev *p_dev, u16 vp_id, u32 rate);
 void ecore_configure_vp_wfq_on_link_change(struct ecore_dev *p_dev,
@@ -811,6 +804,8 @@ int ecore_configure_pf_min_bandwidth(struct ecore_dev *p_dev, u8 min_bw);
 void ecore_clean_wfq_db(struct ecore_hwfn *p_hwfn, struct ecore_ptt *p_ptt);
 int ecore_device_num_engines(struct ecore_dev *p_dev);
 int ecore_device_num_ports(struct ecore_dev *p_dev);
+void ecore_set_fw_mac_addr(__le16 *fw_msb, __le16 *fw_mid, __le16 *fw_lsb,
+			   u8 *mac);
 
 #define ECORE_LEADING_HWFN(dev)	(&dev->hwfns[0])
 

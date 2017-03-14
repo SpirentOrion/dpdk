@@ -104,15 +104,6 @@ static struct rte_tailq_elem rte_pci_tailq = {
 };
 EAL_REGISTER_TAILQ(rte_pci_tailq)
 
-/* unbind kernel driver for this device */
-int
-pci_unbind_kernel_driver(struct rte_pci_device *dev __rte_unused)
-{
-        RTE_LOG(ERR, EAL, "RTE_PCI_DRV_FORCE_UNBIND flag is not implemented "
-                "for OSv\n");
-        return -ENOTSUP;
-}
-
 int
 rte_eal_pci_map_device(struct rte_pci_device *dev)
 {

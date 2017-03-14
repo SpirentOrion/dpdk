@@ -41,10 +41,6 @@
 		(bd)->addr.hi = rte_cpu_to_le_32(U64_HI(maddr)); \
 		(bd)->addr.lo = rte_cpu_to_le_32(U64_LO(maddr)); \
 		(bd)->nbytes = rte_cpu_to_le_16(len); \
-		/* FW 8.10.x specific change */  \
-		(bd)->data.bitfields = ((len) & \
-					 ETH_TX_DATA_1ST_BD_PKT_LEN_MASK) \
-					<< ETH_TX_DATA_1ST_BD_PKT_LEN_SHIFT; \
 	} while (0)
 
 #define CQE_HAS_VLAN(flags) \
@@ -55,24 +51,80 @@
 	((flags) & (PARSING_AND_ERR_FLAGS_TUNNEL8021QTAGEXIST_MASK \
 		<< PARSING_AND_ERR_FLAGS_TUNNEL8021QTAGEXIST_SHIFT))
 
+#define QEDE_MIN_RX_BUFF_SIZE		(1024)
+#define QEDE_VLAN_TAG_SIZE		(4)
+#define QEDE_LLC_SNAP_HDR_LEN		(8)
+
 /* Max supported alignment is 256 (8 shift)
  * minimal alignment shift 6 is optimal for 57xxx HW performance
  */
 #define QEDE_L1_CACHE_SHIFT	6
 #define QEDE_RX_ALIGN_SHIFT	(RTE_MAX(6, RTE_MIN(8, QEDE_L1_CACHE_SHIFT)))
 #define QEDE_FW_RX_ALIGN_END	(1UL << QEDE_RX_ALIGN_SHIFT)
+#define QEDE_CEIL_TO_CACHE_LINE_SIZE(n) (((n) + (QEDE_FW_RX_ALIGN_END - 1)) & \
+					~(QEDE_FW_RX_ALIGN_END - 1))
+/* Note: QEDE_LLC_SNAP_HDR_LEN is optional */
+#define QEDE_ETH_OVERHEAD	((ETHER_HDR_LEN) + ((2 * QEDE_VLAN_TAG_SIZE)) \
+				+ (QEDE_LLC_SNAP_HDR_LEN))
 
-#define QEDE_ETH_OVERHEAD       (ETHER_HDR_LEN + 8 + 8 + QEDE_FW_RX_ALIGN_END)
-
-/* TBD: Excluding IPV6 */
-#define QEDE_RSS_OFFLOAD_ALL    (ETH_RSS_IPV4 | ETH_RSS_NONFRAG_IPV4_TCP | \
-				 ETH_RSS_NONFRAG_IPV4_UDP)
+#define QEDE_RSS_OFFLOAD_ALL    (ETH_RSS_IPV4			|\
+				 ETH_RSS_NONFRAG_IPV4_TCP	|\
+				 ETH_RSS_NONFRAG_IPV4_UDP	|\
+				 ETH_RSS_IPV6			|\
+				 ETH_RSS_NONFRAG_IPV6_TCP	|\
+				 ETH_RSS_NONFRAG_IPV6_UDP	|\
+				 ETH_RSS_VXLAN)
 
 #define QEDE_TXQ_FLAGS		((uint32_t)ETH_TXQ_FLAGS_NOMULTSEGS)
 
 #define MAX_NUM_TC		8
 
 #define for_each_queue(i) for (i = 0; i < qdev->num_queues; i++)
+
+
+/* Macros for non-tunnel packet types lkup table */
+#define QEDE_PKT_TYPE_UNKNOWN				0x0
+#define QEDE_PKT_TYPE_MAX				0xf
+#define QEDE_PKT_TYPE_IPV4				0x1
+#define QEDE_PKT_TYPE_IPV6				0x2
+#define QEDE_PKT_TYPE_IPV4_TCP				0x5
+#define QEDE_PKT_TYPE_IPV6_TCP				0x6
+#define QEDE_PKT_TYPE_IPV4_UDP				0x9
+#define QEDE_PKT_TYPE_IPV6_UDP				0xa
+
+/* Macros for tunneled packets with next protocol lkup table */
+#define QEDE_PKT_TYPE_TUNN_GENEVE			0x1
+#define QEDE_PKT_TYPE_TUNN_GRE				0x2
+#define QEDE_PKT_TYPE_TUNN_VXLAN			0x3
+
+/* Bit 2 is don't care bit */
+#define QEDE_PKT_TYPE_TUNN_L2_TENID_NOEXIST_GENEVE	0x9
+#define QEDE_PKT_TYPE_TUNN_L2_TENID_NOEXIST_GRE	0xa
+#define QEDE_PKT_TYPE_TUNN_L2_TENID_NOEXIST_VXLAN	0xb
+
+#define QEDE_PKT_TYPE_TUNN_L2_TENID_EXIST_GENEVE	0xd
+#define QEDE_PKT_TYPE_TUNN_L2_TENID_EXIST_GRE		0xe
+#define QEDE_PKT_TYPE_TUNN_L2_TENID_EXIST_VXLAN	0xf
+
+
+#define QEDE_PKT_TYPE_TUNN_IPV4_TENID_NOEXIST_GENEVE    0x11
+#define QEDE_PKT_TYPE_TUNN_IPV4_TENID_NOEXIST_GRE       0x12
+#define QEDE_PKT_TYPE_TUNN_IPV4_TENID_NOEXIST_VXLAN     0x13
+
+#define QEDE_PKT_TYPE_TUNN_IPV4_TENID_EXIST_GENEVE	0x15
+#define QEDE_PKT_TYPE_TUNN_IPV4_TENID_EXIST_GRE	0x16
+#define QEDE_PKT_TYPE_TUNN_IPV4_TENID_EXIST_VXLAN	0x17
+
+
+#define QEDE_PKT_TYPE_TUNN_IPV6_TENID_NOEXIST_GENEVE    0x19
+#define QEDE_PKT_TYPE_TUNN_IPV6_TENID_NOEXIST_GRE       0x1a
+#define QEDE_PKT_TYPE_TUNN_IPV6_TENID_NOEXIST_VXLAN     0x1b
+
+#define QEDE_PKT_TYPE_TUNN_IPV6_TENID_EXIST_GENEVE      0x1d
+#define QEDE_PKT_TYPE_TUNN_IPV6_TENID_EXIST_GRE		0x1e
+#define QEDE_PKT_TYPE_TUNN_IPV6_TENID_EXIST_VXLAN       0x1f
+
+#define QEDE_PKT_TYPE_TUNN_MAX_TYPE			0x20 /* 2^5 */
 
 /*
  * RX BD descriptor ring
@@ -133,6 +185,7 @@ struct qede_tx_queue {
 	volatile union db_prod tx_db;
 	uint16_t port_id;
 	uint64_t xmit_pkts;
+	bool is_legacy;
 	struct qede_dev *qdev;
 };
 

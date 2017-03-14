@@ -70,6 +70,7 @@
 #include <rte_string_fns.h>
 #include <rte_errno.h>
 #include <rte_ip.h>
+#include <rte_net.h>
 
 #include "ixgbe_logs.h"
 #include "base/ixgbe_api.h"
@@ -79,13 +80,23 @@
 #include "base/ixgbe_common.h"
 #include "ixgbe_rxtx.h"
 
+#ifdef RTE_LIBRTE_IEEE1588
+#define IXGBE_TX_IEEE1588_TMST PKT_TX_IEEE1588_TMST
+#else
+#define IXGBE_TX_IEEE1588_TMST 0
+#endif
 /* Bit Mask to indicate what bits required for building TX context */
 #define IXGBE_TX_OFFLOAD_MASK (			 \
 		PKT_TX_VLAN_PKT |		 \
 		PKT_TX_IP_CKSUM |		 \
 		PKT_TX_L4_MASK |		 \
 		PKT_TX_TCP_SEG |		 \
-		PKT_TX_OUTER_IP_CKSUM)
+		PKT_TX_MACSEC |			 \
+		PKT_TX_OUTER_IP_CKSUM |		 \
+		IXGBE_TX_IEEE1588_TMST)
+
+#define IXGBE_TX_OFFLOAD_NOTSUP_MASK \
+		(PKT_TX_OFFLOAD_MASK ^ IXGBE_TX_OFFLOAD_MASK)
 
 #if 1
 #define RTE_PMD_USE_PREFETCH
@@ -321,7 +332,7 @@ tx_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 
 	/* update tail pointer */
 	rte_wmb();
-	IXGBE_PCI_REG_WRITE(txq->tdt_reg_addr, txq->tx_tail);
+	IXGBE_PCI_REG_WRITE_RELAXED(txq->tdt_reg_addr, txq->tx_tail);
 
 	return nb_pkts;
 }
@@ -519,6 +530,8 @@ tx_desc_ol_flags_to_cmdtype(uint64_t ol_flags)
 		cmdtype |= IXGBE_ADVTXD_DCMD_TSE;
 	if (ol_flags & PKT_TX_OUTER_IP_CKSUM)
 		cmdtype |= (1 << IXGBE_ADVTXD_OUTERIPCS_SHIFT);
+	if (ol_flags & PKT_TX_MACSEC)
+		cmdtype |= IXGBE_ADVTXD_MAC_LINKSEC;
 	return cmdtype;
 }
 
@@ -897,10 +910,61 @@ end_of_tx:
 	PMD_TX_LOG(DEBUG, "port_id=%u queue_id=%u tx_tail=%u nb_tx=%u",
 		   (unsigned) txq->port_id, (unsigned) txq->queue_id,
 		   (unsigned) tx_id, (unsigned) nb_tx);
-	IXGBE_PCI_REG_WRITE(txq->tdt_reg_addr, tx_id);
+	IXGBE_PCI_REG_WRITE_RELAXED(txq->tdt_reg_addr, tx_id);
 	txq->tx_tail = tx_id;
 
 	return nb_tx;
+}
+
+/*********************************************************************
+ *
+ *  TX prep functions
+ *
+ **********************************************************************/
+uint16_t
+ixgbe_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
+{
+	int i, ret;
+	uint64_t ol_flags;
+	struct rte_mbuf *m;
+	struct ixgbe_tx_queue *txq = (struct ixgbe_tx_queue *)tx_queue;
+
+	for (i = 0; i < nb_pkts; i++) {
+		m = tx_pkts[i];
+		ol_flags = m->ol_flags;
+
+		/**
+		 * Check if packet meets requirements for number of segments
+		 *
+		 * NOTE: for ixgbe it's always (40 - WTHRESH) for both TSO and
+		 *       non-TSO
+		 */
+
+		if (m->nb_segs > IXGBE_TX_MAX_SEG - txq->wthresh) {
+			rte_errno = -EINVAL;
+			return i;
+		}
+
+		if (ol_flags & IXGBE_TX_OFFLOAD_NOTSUP_MASK) {
+			rte_errno = -ENOTSUP;
+			return i;
+		}
+
+#ifdef RTE_LIBRTE_ETHDEV_DEBUG
+		ret = rte_validate_tx_offload(m);
+		if (ret != 0) {
+			rte_errno = ret;
+			return i;
+		}
+#endif
+		ret = rte_net_intel_cksum_prepare(m);
+		if (ret != 0) {
+			rte_errno = ret;
+			return i;
+		}
+	}
+
+	return i;
 }
 
 /*********************************************************************
@@ -1402,17 +1466,19 @@ ixgbe_rx_scan_hw_ring(struct ixgbe_rx_queue *rxq)
 	for (i = 0; i < RTE_PMD_IXGBE_RX_MAX_BURST;
 	     i += LOOK_AHEAD, rxdp += LOOK_AHEAD, rxep += LOOK_AHEAD) {
 		/* Read desc statuses backwards to avoid race condition */
-		for (j = LOOK_AHEAD-1; j >= 0; --j)
+		for (j = 0; j < LOOK_AHEAD; j++)
 			s[j] = rte_le_to_cpu_32(rxdp[j].wb.upper.status_error);
 
-		for (j = LOOK_AHEAD - 1; j >= 0; --j)
-			pkt_info[j] = rte_le_to_cpu_32(rxdp[j].wb.lower.
-						       lo_dword.data);
+		rte_smp_rmb();
 
 		/* Compute how many status bits were set */
-		nb_dd = 0;
-		for (j = 0; j < LOOK_AHEAD; ++j)
-			nb_dd += s[j] & IXGBE_RXDADV_STAT_DD;
+		for (nb_dd = 0; nb_dd < LOOK_AHEAD &&
+				(s[nb_dd] & IXGBE_RXDADV_STAT_DD); nb_dd++)
+			;
+
+		for (j = 0; j < nb_dd; j++)
+			pkt_info[j] = rte_le_to_cpu_32(rxdp[j].wb.lower.
+						       lo_dword.data);
 
 		nb_rx += nb_dd;
 
@@ -1581,7 +1647,8 @@ rx_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 
 		/* update tail pointer */
 		rte_wmb();
-		IXGBE_PCI_REG_WRITE(rxq->rdt_reg_addr, cur_free_trigger);
+		IXGBE_PCI_REG_WRITE_RELAXED(rxq->rdt_reg_addr,
+					    cur_free_trigger);
 	}
 
 	if (rxq->rx_tail >= rxq->nb_rx_desc)
@@ -1985,8 +2052,8 @@ next_desc:
 
 			if (!ixgbe_rx_alloc_bufs(rxq, false)) {
 				rte_wmb();
-				IXGBE_PCI_REG_WRITE(rxq->rdt_reg_addr,
-						    next_rdt);
+				IXGBE_PCI_REG_WRITE_RELAXED(rxq->rdt_reg_addr,
+							    next_rdt);
 				nb_hold -= rxq->rx_free_thresh;
 			} else {
 				PMD_RX_LOG(DEBUG, "RX bulk alloc failed "
@@ -2157,7 +2224,7 @@ next_desc:
 			   rxq->port_id, rxq->queue_id, rx_id, nb_hold, nb_rx);
 
 		rte_wmb();
-		IXGBE_PCI_REG_WRITE(rxq->rdt_reg_addr, prev_id);
+		IXGBE_PCI_REG_WRITE_RELAXED(rxq->rdt_reg_addr, prev_id);
 		nb_hold = 0;
 	}
 
@@ -2282,6 +2349,7 @@ ixgbe_set_tx_function(struct rte_eth_dev *dev, struct ixgbe_tx_queue *txq)
 	if (((txq->txq_flags & IXGBE_SIMPLE_FLAGS) == IXGBE_SIMPLE_FLAGS)
 			&& (txq->tx_rs_thresh >= RTE_PMD_IXGBE_TX_MAX_BURST)) {
 		PMD_INIT_LOG(DEBUG, "Using simple tx code path");
+		dev->tx_pkt_prepare = NULL;
 #ifdef RTE_IXGBE_INC_VECTOR
 		if (txq->tx_rs_thresh <= RTE_IXGBE_TX_MAX_FREE_BUF_SZ &&
 				(rte_eal_process_type() != RTE_PROC_PRIMARY ||
@@ -2302,6 +2370,7 @@ ixgbe_set_tx_function(struct rte_eth_dev *dev, struct ixgbe_tx_queue *txq)
 				(unsigned long)txq->tx_rs_thresh,
 				(unsigned long)RTE_PMD_IXGBE_TX_MAX_BURST);
 		dev->tx_pkt_burst = ixgbe_xmit_pkts;
+		dev->tx_pkt_prepare = ixgbe_prep_pkts;
 	}
 }
 
@@ -2585,7 +2654,6 @@ check_rx_burst_bulk_alloc_preconditions(struct ixgbe_rx_queue *rxq)
 	 *   rxq->rx_free_thresh >= RTE_PMD_IXGBE_RX_MAX_BURST
 	 *   rxq->rx_free_thresh < rxq->nb_rx_desc
 	 *   (rxq->nb_rx_desc % rxq->rx_free_thresh) == 0
-	 *   rxq->nb_rx_desc<(IXGBE_MAX_RING_DESC-RTE_PMD_IXGBE_RX_MAX_BURST)
 	 * Scattered packets are not supported.  This should be checked
 	 * outside of this function.
 	 */
@@ -2607,15 +2675,6 @@ check_rx_burst_bulk_alloc_preconditions(struct ixgbe_rx_queue *rxq)
 			     "rxq->rx_free_thresh=%d",
 			     rxq->nb_rx_desc, rxq->rx_free_thresh);
 		ret = -EINVAL;
-	} else if (!(rxq->nb_rx_desc <
-	       (IXGBE_MAX_RING_DESC - RTE_PMD_IXGBE_RX_MAX_BURST))) {
-		PMD_INIT_LOG(DEBUG, "Rx Burst Bulk Alloc Preconditions: "
-			     "rxq->nb_rx_desc=%d, "
-			     "IXGBE_MAX_RING_DESC=%d, "
-			     "RTE_PMD_IXGBE_RX_MAX_BURST=%d",
-			     rxq->nb_rx_desc, IXGBE_MAX_RING_DESC,
-			     RTE_PMD_IXGBE_RX_MAX_BURST);
-		ret = -EINVAL;
 	}
 
 	return ret;
@@ -2632,12 +2691,7 @@ ixgbe_reset_rx_queue(struct ixgbe_adapter *adapter, struct ixgbe_rx_queue *rxq)
 	/*
 	 * By default, the Rx queue setup function allocates enough memory for
 	 * IXGBE_MAX_RING_DESC.  The Rx Burst bulk allocation function requires
-	 * extra memory at the end of the descriptor ring to be zero'd out. A
-	 * pre-condition for using the Rx burst bulk alloc function is that the
-	 * number of descriptors is less than or equal to
-	 * (IXGBE_MAX_RING_DESC - RTE_PMD_IXGBE_RX_MAX_BURST). Check all the
-	 * constraints here to see if we need to zero out memory after the end
-	 * of the H/W descriptor ring.
+	 * extra memory at the end of the descriptor ring to be zero'd out.
 	 */
 	if (adapter->rx_bulk_alloc_allowed)
 		/* zero out extra memory */

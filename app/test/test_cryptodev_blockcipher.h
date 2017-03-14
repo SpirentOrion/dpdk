@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2016-2017 Intel Corporation. All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -45,10 +45,13 @@
 #define BLOCKCIPHER_TEST_FEATURE_OOP			0x01
 #define BLOCKCIPHER_TEST_FEATURE_SESSIONLESS	0x02
 #define BLOCKCIPHER_TEST_FEATURE_STOPPER	0x04 /* stop upon failing */
+#define BLOCKCIPHER_TEST_FEATURE_SG		0x08 /* Scatter Gather */
 
 #define BLOCKCIPHER_TEST_TARGET_PMD_MB		0x0001 /* Multi-buffer flag */
 #define BLOCKCIPHER_TEST_TARGET_PMD_QAT			0x0002 /* QAT flag */
 #define BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL	0x0004 /* SW OPENSSL flag */
+#define BLOCKCIPHER_TEST_TARGET_PMD_ARMV8	0x0008 /* ARMv8 flag */
+#define BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER	0x0010 /* Scheduler */
 
 #define BLOCKCIPHER_TEST_OP_CIPHER	(BLOCKCIPHER_TEST_OP_ENCRYPT | \
 					BLOCKCIPHER_TEST_OP_DECRYPT)
@@ -67,7 +70,8 @@ enum blockcipher_test_type {
 	BLKCIPHER_AES_CIPHERONLY_TYPE,	/* use aes_cipheronly_test_cases[] */
 	BLKCIPHER_3DES_CHAIN_TYPE,	/* use triple_des_chain_test_cases[] */
 	BLKCIPHER_3DES_CIPHERONLY_TYPE,	/* triple_des_cipheronly_test_cases[] */
-	BLKCIPHER_AUTHONLY_TYPE		/* use hash_test_cases[] */
+	BLKCIPHER_AUTHONLY_TYPE,	/* use hash_test_cases[] */
+	BLKCIPHER_DES_CIPHERONLY_TYPE	/* use des_cipheronly_test_cases[] */
 };
 
 struct blockcipher_test_case {

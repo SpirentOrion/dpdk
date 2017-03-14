@@ -213,7 +213,10 @@ rte::intr_source::run()
 	WITH_LOCK(_lock) {
 		_active.store(true, std::memory_order_release);
 		for (auto cb : _callbacks) {
-			cb->cb_fn(_handle, cb->cb_arg);
+        // XXX: DPDK 17.02 changed the intr handle pointer to const for client
+        // functions, but didn't update the callback's signature.  As a result,
+        // we have to cast away the constness here to prevent compiler warnings.
+        cb->cb_fn(const_cast<struct rte_intr_handle *>(_handle), cb->cb_arg);
 		}
 		_active.store(false, std::memory_order_release);
 	}

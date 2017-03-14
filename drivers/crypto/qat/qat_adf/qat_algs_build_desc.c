@@ -439,6 +439,8 @@ void qat_alg_init_common_hdr(struct icp_qat_fw_comn_req_hdr *header,
 				proto);
 	ICP_QAT_FW_LA_UPDATE_STATE_SET(header->serv_specif_flags,
 					   ICP_QAT_FW_LA_NO_UPDATE_STATE);
+	ICP_QAT_FW_LA_DIGEST_IN_BUFFER_SET(header->serv_specif_flags,
+					ICP_QAT_FW_LA_NO_DIGEST_IN_BUFFER);
 }
 
 int qat_alg_aead_session_create_content_desc_cipher(struct qat_session *cdesc,
@@ -515,6 +517,10 @@ int qat_alg_aead_session_create_content_desc_cipher(struct qat_session *cdesc,
 	} else if (cdesc->qat_cipher_alg == ICP_QAT_HW_CIPHER_ALGO_3DES) {
 		total_key_size = ICP_QAT_HW_3DES_KEY_SZ;
 		cipher_cd_ctrl->cipher_state_sz = ICP_QAT_HW_3DES_BLK_SZ >> 3;
+		proto = ICP_QAT_FW_LA_PROTO_GET(header->serv_specif_flags);
+	} else if (cdesc->qat_cipher_alg == ICP_QAT_HW_CIPHER_ALGO_DES) {
+		total_key_size = ICP_QAT_HW_DES_KEY_SZ;
+		cipher_cd_ctrl->cipher_state_sz = ICP_QAT_HW_DES_BLK_SZ >> 3;
 		proto = ICP_QAT_FW_LA_PROTO_GET(header->serv_specif_flags);
 	} else {
 		total_key_size = cipherkeylen;
@@ -849,6 +855,18 @@ int qat_alg_validate_kasumi_key(int key_len, enum icp_qat_hw_cipher_algo *alg)
 	switch (key_len) {
 	case ICP_QAT_HW_KASUMI_KEY_SZ:
 		*alg = ICP_QAT_HW_CIPHER_ALGO_KASUMI;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+int qat_alg_validate_des_key(int key_len, enum icp_qat_hw_cipher_algo *alg)
+{
+	switch (key_len) {
+	case ICP_QAT_HW_DES_KEY_SZ:
+		*alg = ICP_QAT_HW_CIPHER_ALGO_DES;
 		break;
 	default:
 		return -EINVAL;

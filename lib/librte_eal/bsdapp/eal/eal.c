@@ -64,6 +64,7 @@
 #include <rte_string_fns.h>
 #include <rte_cpuflags.h>
 #include <rte_interrupts.h>
+#include <rte_bus.h>
 #include <rte_pci.h>
 #include <rte_dev.h>
 #include <rte_devargs.h>
@@ -577,8 +578,8 @@ rte_eal_init(int argc, char **argv)
 		rte_config.master_lcore, thread_id, cpuset,
 		ret == 0 ? "" : "...");
 
-	if (rte_eal_dev_init() < 0)
-		rte_panic("Cannot init pmd devices\n");
+	if (rte_bus_scan())
+		rte_panic("Cannot scan the buses for devices\n");
 
 	RTE_LCORE_FOREACH_SLAVE(i) {
 
@@ -612,9 +613,16 @@ rte_eal_init(int argc, char **argv)
 	rte_eal_mp_remote_launch(sync_func, NULL, SKIP_MASTER);
 	rte_eal_mp_wait_lcore();
 
+	/* Probe all the buses and devices/drivers on them */
+	if (rte_bus_probe())
+		rte_panic("Cannot probe devices\n");
+
 	/* Probe & Initialize PCI devices */
 	if (rte_eal_pci_probe())
 		rte_panic("Cannot probe PCI\n");
+
+	if (rte_eal_dev_init() < 0)
+		rte_panic("Cannot init pmd devices\n");
 
 	rte_eal_mcfg_complete();
 

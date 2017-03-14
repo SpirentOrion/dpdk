@@ -117,7 +117,6 @@ virtual_ethdev_info_get(struct rte_eth_dev *dev __rte_unused,
 	dev_info->max_tx_queues = (uint16_t)512;
 
 	dev_info->min_rx_bufsize = 0;
-	dev_info->pci_dev = NULL;
 }
 
 static int
@@ -601,8 +600,6 @@ virtual_ethdev_create(const char *name, struct ether_addr *mac_addr,
 	eth_dev->data->nb_rx_queues = (uint16_t)1;
 	eth_dev->data->nb_tx_queues = (uint16_t)1;
 
-	TAILQ_INIT(&(eth_dev->link_intr_cbs));
-
 	eth_dev->data->dev_link.link_status = ETH_LINK_DOWN;
 	eth_dev->data->dev_link.link_speed = ETH_SPEED_NUM_10G;
 	eth_dev->data->dev_link.link_duplex = ETH_LINK_FULL_DUPLEX;
@@ -625,8 +622,8 @@ virtual_ethdev_create(const char *name, struct ether_addr *mac_addr,
 	dev_private->dev_ops = virtual_ethdev_default_dev_ops;
 	eth_dev->dev_ops = &dev_private->dev_ops;
 
-	eth_dev->pci_dev = pci_dev;
-	eth_dev->pci_dev->device.driver = &eth_drv->pci_drv.driver;
+	pci_dev->device.driver = &eth_drv->pci_drv.driver;
+	eth_dev->device = &pci_dev->device;
 
 	eth_dev->rx_pkt_burst = virtual_ethdev_rx_burst_success;
 	eth_dev->tx_pkt_burst = virtual_ethdev_tx_burst_success;

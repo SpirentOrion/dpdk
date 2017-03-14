@@ -37,20 +37,33 @@
 #include <limits.h>
 #include "../virtio_pci.h"
 #include "../virtio_ring.h"
+#include "vhost.h"
 
 struct virtio_user_dev {
+	/* for vhost_user backend */
 	int		vhostfd;
+
+	/* for vhost_kernel backend */
+	char		*ifname;
+	int		*vhostfds;
+	int		*tapfds;
+
+	/* for both vhost_user and vhost_kernel */
 	int		callfds[VIRTIO_MAX_VIRTQUEUES * 2 + 1];
 	int		kickfds[VIRTIO_MAX_VIRTQUEUES * 2 + 1];
 	int		mac_specified;
 	uint32_t	max_queue_pairs;
 	uint32_t	queue_pairs;
 	uint32_t	queue_size;
-	uint64_t	features;
+	uint64_t	features; /* the negotiated features with driver,
+				   * and will be sync with device
+				   */
+	uint64_t	device_features; /* supported features by device */
 	uint8_t		status;
 	uint8_t		mac_addr[ETHER_ADDR_LEN];
 	char		path[PATH_MAX];
 	struct vring	vrings[VIRTIO_MAX_VIRTQUEUES * 2 + 1];
+	struct virtio_user_backend_ops *ops;
 };
 
 int virtio_user_start_device(struct virtio_user_dev *dev);

@@ -78,8 +78,8 @@ static std::vector<std::unique_ptr<rte::poller> > intr_pollers;
 static mutex intr_pollers_lock = MUTEX_INITIALIZER;
 
 int
-rte_intr_callback_register(struct rte_intr_handle *intr_handle,
-			rte_intr_callback_fn cb_fn, void *cb_arg)
+rte_intr_callback_register(const struct rte_intr_handle *intr_handle,
+                           rte_intr_callback_fn cb_fn, void *cb_arg)
 {
 	/* sanity check input */
 	if (intr_handle == nullptr
@@ -131,8 +131,8 @@ rte_intr_callback_register(struct rte_intr_handle *intr_handle,
 }
 
 int
-rte_intr_callback_unregister(struct rte_intr_handle *intr_handle,
-			rte_intr_callback_fn cb_fn, void *cb_arg)
+rte_intr_callback_unregister(const struct rte_intr_handle *intr_handle,
+                             rte_intr_callback_fn cb_fn, void *cb_arg)
 {
 	/* sanity check input */
 	if (intr_handle == nullptr
@@ -161,7 +161,7 @@ rte_intr_callback_unregister(struct rte_intr_handle *intr_handle,
 }
 
 int
-rte_intr_enable(struct rte_intr_handle *intr_handle)
+rte_intr_enable(const struct rte_intr_handle *intr_handle)
 {
 	if (intr_handle == nullptr
 		|| intr_handle->device == nullptr) {
@@ -206,7 +206,7 @@ rte_intr_enable(struct rte_intr_handle *intr_handle)
 }
 
 int
-rte_intr_disable(struct rte_intr_handle *intr_handle)
+rte_intr_disable(const struct rte_intr_handle *intr_handle)
 {
 	if (intr_handle == nullptr
 		|| intr_handle->device == nullptr) {

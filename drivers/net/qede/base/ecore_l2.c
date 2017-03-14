@@ -36,9 +36,9 @@ ecore_sp_eth_vport_start(struct ecore_hwfn *p_hwfn,
 	struct vport_start_ramrod_data *p_ramrod = OSAL_NULL;
 	struct ecore_spq_entry *p_ent = OSAL_NULL;
 	struct ecore_sp_init_data init_data;
+	u16 rx_mode = 0, tx_err = 0;
 	u8 abs_vport_id = 0;
 	enum _ecore_status_t rc = ECORE_NOTIMPL;
-	u16 rx_mode = 0;
 
 	rc = ecore_fw_vport(p_hwfn, p_params->vport_id, &abs_vport_id);
 	if (rc != ECORE_SUCCESS)
@@ -70,6 +70,30 @@ ecore_sp_eth_vport_start(struct ecore_hwfn *p_hwfn,
 	SET_FIELD(rx_mode, ETH_VPORT_RX_MODE_MCAST_DROP_ALL, 1);
 
 	p_ramrod->rx_mode.state = OSAL_CPU_TO_LE16(rx_mode);
+
+	/* Handle requests for strict behavior on transmission errors */
+	SET_FIELD(tx_err, ETH_TX_ERR_VALS_ILLEGAL_VLAN_MODE,
+		  p_params->b_err_illegal_vlan_mode ?
+		  ETH_TX_ERR_ASSERT_MALICIOUS : 0);
+	SET_FIELD(tx_err, ETH_TX_ERR_VALS_PACKET_TOO_SMALL,
+		  p_params->b_err_small_pkt ?
+		  ETH_TX_ERR_ASSERT_MALICIOUS : 0);
+	SET_FIELD(tx_err, ETH_TX_ERR_VALS_ANTI_SPOOFING_ERR,
+		  p_params->b_err_anti_spoof ?
+		  ETH_TX_ERR_ASSERT_MALICIOUS : 0);
+	SET_FIELD(tx_err, ETH_TX_ERR_VALS_ILLEGAL_INBAND_TAGS,
+		  p_params->b_err_illegal_inband_mode ?
+		  ETH_TX_ERR_ASSERT_MALICIOUS : 0);
+	SET_FIELD(tx_err, ETH_TX_ERR_VALS_VLAN_INSERTION_W_INBAND_TAG,
+		  p_params->b_err_vlan_insert_with_inband ?
+		  ETH_TX_ERR_ASSERT_MALICIOUS : 0);
+	SET_FIELD(tx_err, ETH_TX_ERR_VALS_MTU_VIOLATION,
+		  p_params->b_err_big_pkt ?
+		  ETH_TX_ERR_ASSERT_MALICIOUS : 0);
+	SET_FIELD(tx_err, ETH_TX_ERR_VALS_ILLEGAL_CONTROL_FRAME,
+		  p_params->b_err_ctrl_frame ?
+		  ETH_TX_ERR_ASSERT_MALICIOUS : 0);
+	p_ramrod->tx_err_behav.values = OSAL_CPU_TO_LE16(tx_err);
 
 	/* TPA related fields */
 	OSAL_MEMSET(&p_ramrod->tpa_param, 0,
@@ -639,7 +663,7 @@ ecore_sp_eth_rx_queue_start(struct ecore_hwfn *p_hwfn,
 
 	if (IS_VF(p_hwfn->p_dev)) {
 		return ecore_vf_pf_rxq_start(p_hwfn,
-					     p_params->queue_id,
+					     (u8)p_params->queue_id,
 					     p_params->sb,
 					     (u8)p_params->sb_idx,
 					     bd_max_bytes,
@@ -816,9 +840,9 @@ ecore_sp_eth_txq_start_ramrod(struct ecore_hwfn *p_hwfn,
 	struct ecore_spq_entry *p_ent = OSAL_NULL;
 	struct ecore_sp_init_data init_data;
 	struct ecore_hw_cid_data *p_tx_cid;
-	u16 pq_id, abs_tx_q_id = 0;
-	u8 abs_vport_id;
+	u16 pq_id, abs_tx_qzone_id = 0;
 	enum _ecore_status_t rc = ECORE_NOTIMPL;
+	u8 abs_vport_id;
 
 	/* Store information for the stop */
 	p_tx_cid = &p_hwfn->p_tx_cids[p_params->queue_id];
@@ -829,7 +853,7 @@ ecore_sp_eth_txq_start_ramrod(struct ecore_hwfn *p_hwfn,
 	if (rc != ECORE_SUCCESS)
 		return rc;
 
-	rc = ecore_fw_l2_queue(p_hwfn, p_params->queue_id, &abs_tx_q_id);
+	rc = ecore_fw_l2_queue(p_hwfn, p_params->qzone_id, &abs_tx_qzone_id);
 	if (rc != ECORE_SUCCESS)
 		return rc;
 
@@ -852,7 +876,8 @@ ecore_sp_eth_txq_start_ramrod(struct ecore_hwfn *p_hwfn,
 	p_ramrod->sb_index = (u8)p_params->sb_idx;
 	p_ramrod->stats_counter_id = p_params->stats_id;
 
-	p_ramrod->queue_zone_id = OSAL_CPU_TO_LE16(abs_tx_q_id);
+	p_ramrod->queue_zone_id = OSAL_CPU_TO_LE16(abs_tx_qzone_id);
+	p_ramrod->same_as_last_id = OSAL_CPU_TO_LE16(abs_tx_qzone_id);
 
 	p_ramrod->pbl_size = OSAL_CPU_TO_LE16(pbl_size);
 	DMA_REGPAIR_LE(p_ramrod->pbl_base_addr, pbl_addr);
@@ -988,17 +1013,6 @@ ecore_filter_action(enum ecore_filter_opcode opcode)
 	return action;
 }
 
-static void ecore_set_fw_mac_addr(__le16 *fw_msb,
-				  __le16 *fw_mid, __le16 *fw_lsb, u8 *mac)
-{
-	((u8 *)fw_msb)[0] = mac[1];
-	((u8 *)fw_msb)[1] = mac[0];
-	((u8 *)fw_mid)[0] = mac[3];
-	((u8 *)fw_mid)[1] = mac[2];
-	((u8 *)fw_lsb)[0] = mac[5];
-	((u8 *)fw_lsb)[1] = mac[4];
-}
-
 static enum _ecore_status_t
 ecore_filter_ucast_common(struct ecore_hwfn *p_hwfn,
 			  u16 opaque_fid,
@@ -1092,6 +1106,9 @@ ecore_filter_ucast_common(struct ecore_hwfn *p_hwfn,
 		break;
 	case ECORE_FILTER_VNI:
 		p_first_filter->type = ETH_FILTER_TYPE_VNI;
+		break;
+	case ECORE_FILTER_UNUSED: /* @DPDK */
+		p_first_filter->type = MAX_ETH_FILTER_TYPE;
 		break;
 	}
 

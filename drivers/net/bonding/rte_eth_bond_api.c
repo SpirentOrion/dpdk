@@ -37,14 +37,13 @@
 #include <rte_malloc.h>
 #include <rte_ethdev.h>
 #include <rte_tcp.h>
+#include <rte_vdev.h>
 
 #include "rte_eth_bond.h"
 #include "rte_eth_bond_private.h"
 #include "rte_eth_bond_8023ad_private.h"
 
 #define DEFAULT_POLLING_INTERVAL_10_MS (10)
-
-const char pmd_bond_driver_name[] = "rte_bond_pmd";
 
 int
 check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev)
@@ -54,7 +53,7 @@ check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev)
 		return -1;
 
 	/* return 0 if driver name matches */
-	return eth_dev->data->drv_name != pmd_bond_driver_name;
+	return eth_dev->data->drv_name != pmd_bond_drv.driver.name;
 }
 
 int
@@ -200,10 +199,6 @@ rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 	eth_dev->data->nb_rx_queues = (uint16_t)1;
 	eth_dev->data->nb_tx_queues = (uint16_t)1;
 
-	TAILQ_INIT(&(eth_dev->link_intr_cbs));
-
-	eth_dev->data->dev_link.link_status = ETH_LINK_DOWN;
-
 	eth_dev->data->mac_addrs = rte_zmalloc_socket(name, ETHER_ADDR_LEN, 0,
 			socket_id);
 	if (eth_dev->data->mac_addrs == NULL) {
@@ -211,17 +206,12 @@ rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 		goto err;
 	}
 
-	eth_dev->data->dev_started = 0;
-	eth_dev->data->promiscuous = 0;
-	eth_dev->data->scattered_rx = 0;
-	eth_dev->data->all_multicast = 0;
-
 	eth_dev->dev_ops = &default_dev_ops;
 	eth_dev->data->dev_flags = RTE_ETH_DEV_INTR_LSC |
 		RTE_ETH_DEV_DETACHABLE;
 	eth_dev->driver = NULL;
 	eth_dev->data->kdrv = RTE_KDRV_NONE;
-	eth_dev->data->drv_name = pmd_bond_driver_name;
+	eth_dev->data->drv_name = pmd_bond_drv.driver.name;
 	eth_dev->data->numa_node =  socket_id;
 
 	rte_spinlock_init(&internals->lock);

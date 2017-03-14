@@ -119,7 +119,6 @@ static struct ether_addr eth_addr = {
 	.addr_bytes = { 0, 0, 0, 0x1, 0x2, 0x3 }
 };
 
-static const char *drivername = "Pcap PMD";
 static struct rte_eth_link pmd_link = {
 		.link_speed = ETH_SPEED_NUM_10G,
 		.link_duplex = ETH_LINK_FULL_DUPLEX,
@@ -247,7 +246,7 @@ calculate_timestamp(struct timeval *ts) {
 
 	cycles = rte_get_timer_cycles() - start_cycles;
 	cur_time.tv_sec = cycles / hz;
-	cur_time.tv_usec = (cycles % hz) * 10e6 / hz;
+	cur_time.tv_usec = (cycles % hz) * 1e6 / hz;
 	timeradd(&start_time, &cur_time, ts);
 }
 
@@ -552,14 +551,12 @@ eth_dev_info(struct rte_eth_dev *dev,
 {
 	struct pmd_internals *internals = dev->data->dev_private;
 
-	dev_info->driver_name = drivername;
 	dev_info->if_index = internals->if_index;
 	dev_info->max_mac_addrs = 1;
 	dev_info->max_rx_pktlen = (uint32_t) -1;
 	dev_info->max_rx_queues = dev->data->nb_rx_queues;
 	dev_info->max_tx_queues = dev->data->nb_tx_queues;
 	dev_info->min_rx_bufsize = 0;
-	dev_info->pci_dev = NULL;
 }
 
 static void
@@ -790,6 +787,8 @@ open_tx_iface(const char *key, const char *value, void *extra_args)
 	return 0;
 }
 
+static struct rte_vdev_driver pmd_pcap_drv;
+
 static int
 pmd_init_internals(const char *name, const unsigned int nb_rx_queues,
 		const unsigned int nb_tx_queues,
@@ -842,7 +841,7 @@ pmd_init_internals(const char *name, const unsigned int nb_rx_queues,
 	(*eth_dev)->driver = NULL;
 	data->dev_flags = RTE_ETH_DEV_DETACHABLE;
 	data->kdrv = RTE_KDRV_NONE;
-	data->drv_name = drivername;
+	data->drv_name = pmd_pcap_drv.driver.name;
 	data->numa_node = numa_node;
 
 	return 0;

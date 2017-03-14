@@ -160,6 +160,12 @@ struct rte_pci_device {
 	enum rte_kernel_driver kdrv;            /**< Kernel driver passthrough */
 };
 
+/**
+ * @internal
+ * Helper macro for drivers that need to convert to struct rte_pci_device.
+ */
+#define RTE_DEV_TO_PCI(ptr) container_of(ptr, struct rte_pci_device, device)
+
 /** Any PCI device identifier (vendor, device, ...) */
 #define PCI_ANY_ID (0xffff)
 #define RTE_CLASS_ANY_ID (0xffffff)
@@ -208,12 +214,8 @@ struct rte_pci_driver {
 
 /** Device needs PCI BAR mapping (done with either IGB_UIO or VFIO) */
 #define RTE_PCI_DRV_NEED_MAPPING 0x0001
-/** Device needs to be unbound even if no module is provided */
-#define RTE_PCI_DRV_FORCE_UNBIND 0x0004
 /** Device driver supports link state interrupt */
 #define RTE_PCI_DRV_INTR_LSC	0x0008
-/** Device driver supports detaching capability */
-#define RTE_PCI_DRV_DETACHABLE	0x0010
 
 /**
  * A structure describing a PCI mapping.

@@ -82,8 +82,17 @@ virtio_user_write_dev_config(struct virtio_hw *hw, size_t offset,
 		for (i = 0; i < ETHER_ADDR_LEN; ++i)
 			dev->mac_addr[i] = ((const uint8_t *)src)[i];
 	else
-		PMD_DRV_LOG(ERR, "not supported offset=%zu, len=%d\n",
+		PMD_DRV_LOG(ERR, "not supported offset=%zu, len=%d",
 			    offset, length);
+}
+
+static void
+virtio_user_reset(struct virtio_hw *hw)
+{
+	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
+
+	if (dev->status & VIRTIO_CONFIG_STATUS_DRIVER_OK)
+		virtio_user_stop_device(dev);
 }
 
 static void
@@ -93,15 +102,9 @@ virtio_user_set_status(struct virtio_hw *hw, uint8_t status)
 
 	if (status & VIRTIO_CONFIG_STATUS_DRIVER_OK)
 		virtio_user_start_device(dev);
+	else if (status == VIRTIO_CONFIG_STATUS_RESET)
+		virtio_user_reset(hw);
 	dev->status = status;
-}
-
-static void
-virtio_user_reset(struct virtio_hw *hw)
-{
-	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
-
-	virtio_user_stop_device(dev);
 }
 
 static uint8_t
@@ -117,7 +120,8 @@ virtio_user_get_features(struct virtio_hw *hw)
 {
 	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
 
-	return dev->features;
+	/* unmask feature bits defined in vhost user protocol */
+	return dev->device_features & VIRTIO_PMD_SUPPORTED_GUEST_FEATURES;
 }
 
 static void
@@ -125,7 +129,7 @@ virtio_user_set_features(struct virtio_hw *hw, uint64_t features)
 {
 	struct virtio_user_dev *dev = virtio_user_get_dev(hw);
 
-	dev->features = features;
+	dev->features = features & dev->device_features;
 }
 
 static uint8_t
@@ -208,11 +212,11 @@ virtio_user_notify_queue(struct virtio_hw *hw, struct virtqueue *vq)
 	}
 
 	if (write(dev->kickfds[vq->vq_queue_index], &buf, sizeof(buf)) < 0)
-		PMD_DRV_LOG(ERR, "failed to kick backend: %s\n",
+		PMD_DRV_LOG(ERR, "failed to kick backend: %s",
 			    strerror(errno));
 }
 
-static const struct virtio_pci_ops virtio_user_ops = {
+const struct virtio_pci_ops virtio_user_ops = {
 	.read_dev_cfg	= virtio_user_read_dev_config,
 	.write_dev_cfg	= virtio_user_write_dev_config,
 	.reset		= virtio_user_reset,
@@ -270,6 +274,8 @@ get_integer_arg(const char *key __rte_unused,
 	return 0;
 }
 
+static struct rte_vdev_driver virtio_user_driver;
+
 static struct rte_eth_dev *
 virtio_user_eth_dev_alloc(const char *name)
 {
@@ -301,16 +307,17 @@ virtio_user_eth_dev_alloc(const char *name)
 		return NULL;
 	}
 
-	hw->vtpci_ops = &virtio_user_ops;
+	hw->port_id = data->port_id;
+	virtio_hw_internal[hw->port_id].vtpci_ops = &virtio_user_ops;
 	hw->use_msix = 0;
 	hw->modern   = 0;
 	hw->use_simple_rxtx = 0;
 	hw->virtio_user_dev = dev;
 	data->dev_private = hw;
+	data->drv_name = virtio_user_driver.driver.name;
 	data->numa_node = SOCKET_ID_ANY;
 	data->kdrv = RTE_KDRV_NONE;
 	data->dev_flags = RTE_ETH_DEV_DETACHABLE;
-	eth_dev->pci_dev = NULL;
 	eth_dev->driver = NULL;
 	return eth_dev;
 }
@@ -363,7 +370,7 @@ virtio_user_pmd_probe(const char *name, const char *params)
 			goto end;
 		}
 	} else {
-		PMD_INIT_LOG(ERR, "arg %s is mandatory for virtio_user\n",
+		PMD_INIT_LOG(ERR, "arg %s is mandatory for virtio_user",
 			  VIRTIO_USER_ARG_QUEUE_SIZE);
 		goto end;
 	}
@@ -454,7 +461,7 @@ virtio_user_pmd_remove(const char *name)
 	if (!name)
 		return -EINVAL;
 
-	PMD_DRV_LOG(INFO, "Un-Initializing %s\n", name);
+	PMD_DRV_LOG(INFO, "Un-Initializing %s", name);
 	eth_dev = rte_eth_dev_allocated(name);
 	if (!eth_dev)
 		return -ENODEV;

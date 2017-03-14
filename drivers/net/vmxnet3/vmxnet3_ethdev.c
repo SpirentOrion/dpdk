@@ -69,6 +69,8 @@
 
 #define PROCESS_SYS_EVENTS 0
 
+#define	VMXNET3_TX_MAX_SEG	UINT8_MAX
+
 static int eth_vmxnet3_dev_init(struct rte_eth_dev *eth_dev);
 static int eth_vmxnet3_dev_uninit(struct rte_eth_dev *eth_dev);
 static int vmxnet3_dev_configure(struct rte_eth_dev *dev);
@@ -138,7 +140,7 @@ gpa_zone_reserve(struct rte_eth_dev *dev, uint32_t size,
 	const struct rte_memzone *mz;
 
 	snprintf(z_name, sizeof(z_name), "%s_%d_%s",
-		 dev->driver->pci_drv.driver.name, dev->data->port_id, post_string);
+		 dev->data->drv_name, dev->data->port_id, post_string);
 
 	mz = rte_memzone_lookup(z_name);
 	if (!reuse) {
@@ -237,7 +239,8 @@ eth_vmxnet3_dev_init(struct rte_eth_dev *eth_dev)
 	eth_dev->dev_ops = &vmxnet3_eth_dev_ops;
 	eth_dev->rx_pkt_burst = &vmxnet3_recv_pkts;
 	eth_dev->tx_pkt_burst = &vmxnet3_xmit_pkts;
-	pci_dev = eth_dev->pci_dev;
+	eth_dev->tx_pkt_prepare = vmxnet3_prep_pkts;
+	pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
 
 	/*
 	 * for secondary processes, we don't initialize any further as primary
@@ -247,6 +250,7 @@ eth_vmxnet3_dev_init(struct rte_eth_dev *eth_dev)
 		return 0;
 
 	rte_eth_copy_pci_info(eth_dev, pci_dev);
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_DETACHABLE;
 
 	/* Vendor and Device ID need to be set before init of shared code */
 	hw->device_id = pci_dev->id.device_id;
@@ -326,6 +330,7 @@ eth_vmxnet3_dev_uninit(struct rte_eth_dev *eth_dev)
 	eth_dev->dev_ops = NULL;
 	eth_dev->rx_pkt_burst = NULL;
 	eth_dev->tx_pkt_burst = NULL;
+	eth_dev->tx_pkt_prepare = NULL;
 
 	rte_free(eth_dev->data->mac_addrs);
 	eth_dev->data->mac_addrs = NULL;
@@ -336,7 +341,7 @@ eth_vmxnet3_dev_uninit(struct rte_eth_dev *eth_dev)
 static struct eth_driver rte_vmxnet3_pmd = {
 	.pci_drv = {
 		.id_table = pci_id_vmxnet3_map,
-		.drv_flags = RTE_PCI_DRV_NEED_MAPPING | RTE_PCI_DRV_DETACHABLE,
+		.drv_flags = RTE_PCI_DRV_NEED_MAPPING,
 		.probe = rte_eth_dev_pci_probe,
 		.remove = rte_eth_dev_pci_remove,
 	},
@@ -706,13 +711,16 @@ vmxnet3_dev_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 }
 
 static void
-vmxnet3_dev_info_get(__rte_unused struct rte_eth_dev *dev,
+vmxnet3_dev_info_get(struct rte_eth_dev *dev,
 		     struct rte_eth_dev_info *dev_info)
 {
+	dev_info->pci_dev = RTE_DEV_TO_PCI(dev->device);
+
 	dev_info->max_rx_queues = VMXNET3_MAX_RX_QUEUES;
 	dev_info->max_tx_queues = VMXNET3_MAX_TX_QUEUES;
 	dev_info->min_rx_bufsize = 1518 + RTE_PKTMBUF_HEADROOM;
 	dev_info->max_rx_pktlen = 16384; /* includes CRC, cf MAXFRS register */
+	dev_info->speed_capa = ETH_LINK_SPEED_10G;
 	dev_info->max_mac_addrs = VMXNET3_MAX_MAC_ADDRS;
 
 	dev_info->default_txconf.txq_flags = ETH_TXQ_FLAGS_NOXSUMSCTP;
@@ -728,6 +736,8 @@ vmxnet3_dev_info_get(__rte_unused struct rte_eth_dev *dev,
 		.nb_max = VMXNET3_TX_RING_MAX_SIZE,
 		.nb_min = VMXNET3_DEF_TX_RING_SIZE,
 		.nb_align = 1,
+		.nb_seg_max = VMXNET3_TX_MAX_SEG,
+		.nb_mtu_seg_max = VMXNET3_MAX_TXD_PER_PKT,
 	};
 
 	dev_info->rx_offload_capa =
@@ -962,3 +972,4 @@ vmxnet3_process_events(struct vmxnet3_hw *hw)
 
 RTE_PMD_REGISTER_PCI(net_vmxnet3, rte_vmxnet3_pmd.pci_drv);
 RTE_PMD_REGISTER_PCI_TABLE(net_vmxnet3, pci_id_vmxnet3_map);
+RTE_PMD_REGISTER_KMOD_DEP(net_vmxnet3, "* igb_uio | uio_pci_generic | vfio");

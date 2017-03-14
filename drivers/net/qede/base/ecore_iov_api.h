@@ -52,6 +52,7 @@ enum ecore_iov_pf_to_vf_status {
 	PFVF_STATUS_NOT_SUPPORTED,
 	PFVF_STATUS_NO_RESOURCE,
 	PFVF_STATUS_FORCED,
+	PFVF_STATUS_MALICIOUS,
 };
 
 struct ecore_mcp_link_params;
@@ -301,12 +302,13 @@ bool ecore_iov_is_vf_pending_flr(struct ecore_hwfn *p_hwfn,
  * @param p_hwfn
  * @param rel_vf_id - Relative VF ID
  * @param b_enabled_only - consider only enabled VF
+ * @param b_non_malicious - true iff we want to validate vf isn't malicious.
  *
  * @return bool - true for valid VF ID
  */
 bool ecore_iov_is_valid_vfid(struct ecore_hwfn *p_hwfn,
 			     int rel_vf_id,
-			     bool b_enabled_only);
+			     bool b_enabled_only, bool b_non_malicious);
 
 /**
  * @brief Get VF's public info structure
@@ -660,6 +662,17 @@ bool ecore_iov_is_vf_acquired_not_initialized(struct ecore_hwfn *p_hwfn,
  */
 bool ecore_iov_is_vf_initialized(struct ecore_hwfn *p_hwfn,
 				 u16 rel_vf_id);
+
+/**
+ * @brief - Returm true if VF has started in FW
+ *
+ * @param p_hwfn
+ * @param rel_vf_id
+ *
+ * @return
+ */
+bool ecore_iov_is_vf_started(struct ecore_hwfn *p_hwfn,
+			     u16 rel_vf_id);
 
 /**
  * @brief - Get VF's vport min rate configured.

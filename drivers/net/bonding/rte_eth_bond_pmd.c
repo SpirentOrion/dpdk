@@ -900,7 +900,6 @@ bond_ethdev_tx_burst_alb(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		}
 
 		num_tx_total += num_send;
-		num_not_send += slave_bufs_pkts[RTE_MAX_ETHPORTS] - num_send;
 	}
 
 	return num_tx_total;
@@ -1317,8 +1316,6 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 	struct bond_rx_queue *bd_rx_q;
 	struct bond_tx_queue *bd_tx_q;
 
-	uint16_t old_nb_tx_queues = slave_eth_dev->data->nb_tx_queues;
-	uint16_t old_nb_rx_queues = slave_eth_dev->data->nb_rx_queues;
 	int errval;
 	uint16_t q_id;
 
@@ -1362,9 +1359,7 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 	}
 
 	/* Setup Rx Queues */
-	/* Use existing queues, if any */
-	for (q_id = old_nb_rx_queues;
-	     q_id < bonded_eth_dev->data->nb_rx_queues; q_id++) {
+	for (q_id = 0; q_id < bonded_eth_dev->data->nb_rx_queues; q_id++) {
 		bd_rx_q = (struct bond_rx_queue *)bonded_eth_dev->data->rx_queues[q_id];
 
 		errval = rte_eth_rx_queue_setup(slave_eth_dev->data->port_id, q_id,
@@ -1380,9 +1375,7 @@ slave_configure(struct rte_eth_dev *bonded_eth_dev,
 	}
 
 	/* Setup Tx Queues */
-	/* Use existing queues, if any */
-	for (q_id = old_nb_tx_queues;
-	     q_id < bonded_eth_dev->data->nb_tx_queues; q_id++) {
+	for (q_id = 0; q_id < bonded_eth_dev->data->nb_tx_queues; q_id++) {
 		bd_tx_q = (struct bond_tx_queue *)bonded_eth_dev->data->tx_queues[q_id];
 
 		errval = rte_eth_tx_queue_setup(slave_eth_dev->data->port_id, q_id,
@@ -1454,6 +1447,9 @@ slave_remove(struct bond_dev_private *internals,
 				(internals->slave_count - i - 1));
 
 	internals->slave_count--;
+
+	/* force reconfiguration of slave interfaces */
+	_rte_eth_dev_reset(slave_eth_dev);
 }
 
 static void
@@ -1675,7 +1671,6 @@ bond_ethdev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->max_tx_queues = (uint16_t)512;
 
 	dev_info->min_rx_bufsize = 0;
-	dev_info->pci_dev = NULL;
 
 	dev_info->rx_offload_capa = internals->rx_offload_capa;
 	dev_info->tx_offload_capa = internals->tx_offload_capa;
@@ -2566,12 +2561,12 @@ bond_ethdev_configure(struct rte_eth_dev *dev)
 	return 0;
 }
 
-static struct rte_vdev_driver bond_drv = {
+struct rte_vdev_driver pmd_bond_drv = {
 	.probe = bond_probe,
 	.remove = bond_remove,
 };
 
-RTE_PMD_REGISTER_VDEV(net_bonding, bond_drv);
+RTE_PMD_REGISTER_VDEV(net_bonding, pmd_bond_drv);
 RTE_PMD_REGISTER_ALIAS(net_bonding, eth_bond);
 
 RTE_PMD_REGISTER_PARAM_STRING(net_bonding,

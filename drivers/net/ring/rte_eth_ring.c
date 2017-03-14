@@ -75,7 +75,6 @@ struct pmd_internals {
 };
 
 
-static const char *drivername = "Rings PMD";
 static struct rte_eth_link pmd_link = {
 		.link_speed = ETH_SPEED_NUM_10G,
 		.link_duplex = ETH_LINK_FULL_DUPLEX,
@@ -173,13 +172,11 @@ eth_dev_info(struct rte_eth_dev *dev,
 		struct rte_eth_dev_info *dev_info)
 {
 	struct pmd_internals *internals = dev->data->dev_private;
-	dev_info->driver_name = drivername;
 	dev_info->max_mac_addrs = 1;
 	dev_info->max_rx_pktlen = (uint32_t)-1;
 	dev_info->max_rx_queues = (uint16_t)internals->max_rx_queues;
 	dev_info->max_tx_queues = (uint16_t)internals->max_tx_queues;
 	dev_info->min_rx_bufsize = 0;
-	dev_info->pci_dev = NULL;
 }
 
 static void
@@ -258,6 +255,8 @@ static const struct eth_dev_ops ops = {
 	.mac_addr_remove = eth_mac_addr_remove,
 	.mac_addr_add = eth_mac_addr_add,
 };
+
+static struct rte_vdev_driver pmd_ring_drv;
 
 static int
 do_eth_dev_ring_create(const char *name,
@@ -343,10 +342,8 @@ do_eth_dev_ring_create(const char *name,
 	eth_dev->dev_ops = &ops;
 	data->dev_flags = RTE_ETH_DEV_DETACHABLE;
 	data->kdrv = RTE_KDRV_NONE;
-	data->drv_name = drivername;
+	data->drv_name = pmd_ring_drv.driver.name;
 	data->numa_node = numa_node;
-
-	TAILQ_INIT(&(eth_dev->link_intr_cbs));
 
 	/* finally assign rx and tx ops */
 	eth_dev->rx_pkt_burst = eth_ring_rx;

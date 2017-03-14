@@ -2961,19 +2961,25 @@ rxq_cq_to_pkt_type(uint32_t flags)
 	if (flags & IBV_EXP_CQ_RX_TUNNEL_PACKET)
 		pkt_type =
 			TRANSPOSE(flags,
-			          IBV_EXP_CQ_RX_OUTER_IPV4_PACKET, RTE_PTYPE_L3_IPV4) |
+				  IBV_EXP_CQ_RX_OUTER_IPV4_PACKET,
+				  RTE_PTYPE_L3_IPV4_EXT_UNKNOWN) |
 			TRANSPOSE(flags,
-			          IBV_EXP_CQ_RX_OUTER_IPV6_PACKET, RTE_PTYPE_L3_IPV6) |
+				  IBV_EXP_CQ_RX_OUTER_IPV6_PACKET,
+				  RTE_PTYPE_L3_IPV6_EXT_UNKNOWN) |
 			TRANSPOSE(flags,
-			          IBV_EXP_CQ_RX_IPV4_PACKET, RTE_PTYPE_INNER_L3_IPV4) |
+				  IBV_EXP_CQ_RX_IPV4_PACKET,
+				  RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN) |
 			TRANSPOSE(flags,
-			          IBV_EXP_CQ_RX_IPV6_PACKET, RTE_PTYPE_INNER_L3_IPV6);
+				  IBV_EXP_CQ_RX_IPV6_PACKET,
+				  RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN);
 	else
 		pkt_type =
 			TRANSPOSE(flags,
-			          IBV_EXP_CQ_RX_IPV4_PACKET, RTE_PTYPE_L3_IPV4) |
+				  IBV_EXP_CQ_RX_IPV4_PACKET,
+				  RTE_PTYPE_L3_IPV4_EXT_UNKNOWN) |
 			TRANSPOSE(flags,
-			          IBV_EXP_CQ_RX_IPV6_PACKET, RTE_PTYPE_L3_IPV6);
+				  IBV_EXP_CQ_RX_IPV6_PACKET,
+				  RTE_PTYPE_L3_IPV6_EXT_UNKNOWN);
 	return pkt_type;
 }
 
@@ -4421,6 +4427,8 @@ mlx4_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 	unsigned int max;
 	char ifname[IF_NAMESIZE];
 
+	info->pci_dev = RTE_DEV_TO_PCI(dev->device);
+
 	if (priv == NULL)
 		return;
 	priv_lock(priv);
@@ -4821,7 +4829,7 @@ end:
 }
 
 /**
- * DPDK callback to retrieve physical link information (unlocked version).
+ * DPDK callback to retrieve physical link information.
  *
  * @param dev
  *   Pointer to Ethernet device structure.
@@ -4829,15 +4837,17 @@ end:
  *   Wait for request completion (ignored).
  */
 static int
-mlx4_link_update_unlocked(struct rte_eth_dev *dev, int wait_to_complete)
+mlx4_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 {
-	struct priv *priv = mlx4_get_priv(dev);
+	const struct priv *priv = mlx4_get_priv(dev);
 	struct ethtool_cmd edata = {
 		.cmd = ETHTOOL_GSET
 	};
 	struct ifreq ifr;
 	struct rte_eth_link dev_link;
 	int link_speed = 0;
+
+	/* priv_lock() is not taken to allow concurrent calls. */
 
 	if (priv == NULL)
 		return -EINVAL;
@@ -4871,28 +4881,6 @@ mlx4_link_update_unlocked(struct rte_eth_dev *dev, int wait_to_complete)
 	}
 	/* Link status is still the same. */
 	return -1;
-}
-
-/**
- * DPDK callback to retrieve physical link information.
- *
- * @param dev
- *   Pointer to Ethernet device structure.
- * @param wait_to_complete
- *   Wait for request completion (ignored).
- */
-static int
-mlx4_link_update(struct rte_eth_dev *dev, int wait_to_complete)
-{
-	struct priv *priv = mlx4_get_priv(dev);
-	int ret;
-
-	if (priv == NULL)
-		return -EINVAL;
-	priv_lock(priv);
-	ret = mlx4_link_update_unlocked(dev, wait_to_complete);
-	priv_unlock(priv);
-	return ret;
 }
 
 /**
@@ -5411,7 +5399,7 @@ priv_dev_link_status_handler(struct priv *priv, struct rte_eth_dev *dev)
 		struct rte_eth_link *link = &dev->data->dev_link;
 
 		priv->pending_alarm = 0;
-		mlx4_link_update_unlocked(dev, 0);
+		mlx4_link_update(dev, 0);
 		if (((link->link_speed == 0) && link->link_status) ||
 		    ((link->link_speed != 0) && !link->link_status)) {
 			/* Inconsistent status, check again later. */
@@ -5834,11 +5822,9 @@ mlx4_pci_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 			eth_dev->rx_pkt_burst = mlx4_rx_burst_secondary_setup;
 		} else {
 			eth_dev->data->dev_private = priv;
-			eth_dev->data->rx_mbuf_alloc_failed = 0;
-			eth_dev->data->mtu = ETHER_MTU;
 			eth_dev->data->mac_addrs = priv->mac;
 		}
-		eth_dev->pci_dev = pci_dev;
+		eth_dev->device = &pci_dev->device;
 
 		rte_eth_copy_pci_info(eth_dev, pci_dev);
 
@@ -5846,7 +5832,6 @@ mlx4_pci_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 
 		priv->dev = eth_dev;
 		eth_dev->dev_ops = &mlx4_dev_ops;
-		TAILQ_INIT(&eth_dev->link_intr_cbs);
 
 		/* Bring Ethernet device up. */
 		DEBUG("forcing Ethernet interface up");
@@ -5937,3 +5922,5 @@ rte_mlx4_pmd_init(void)
 
 RTE_PMD_EXPORT_NAME(net_mlx4, __COUNTER__);
 RTE_PMD_REGISTER_PCI_TABLE(net_mlx4, mlx4_pci_id_map);
+RTE_PMD_REGISTER_KMOD_DEP(net_mlx4,
+	"* ib_uverbs & mlx4_en & mlx4_core & mlx4_ib");

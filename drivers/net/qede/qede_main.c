@@ -21,7 +21,7 @@ static uint8_t npar_tx_switching = 1;
 char fw_file[PATH_MAX];
 
 const char *QEDE_DEFAULT_FIRMWARE =
-	"/lib/firmware/qed/qed_init_values-8.10.9.0.bin";
+	"/lib/firmware/qed/qed_init_values-8.14.6.0.bin";
 
 static void
 qed_update_pf_params(struct ecore_dev *edev, struct ecore_pf_params *params)
@@ -51,10 +51,9 @@ qed_probe(struct ecore_dev *edev, struct rte_pci_device *pci_dev,
 
 	ecore_init_struct(edev);
 	qdev->protocol = protocol;
-	if (is_vf) {
+	if (is_vf)
 		edev->b_is_vf = true;
-		edev->b_hw_channel = true; /* @DPDK */
-	}
+
 	ecore_init_dp(edev, dp_module, dp_level, NULL);
 	qed_init_pci(edev, pci_dev);
 
@@ -62,6 +61,8 @@ qed_probe(struct ecore_dev *edev, struct rte_pci_device *pci_dev,
 	hw_prepare_params.personality = ECORE_PCI_ETH;
 	hw_prepare_params.drv_resc_alloc = false;
 	hw_prepare_params.chk_reg_fifo = false;
+	hw_prepare_params.initiate_pf_flr = true;
+	hw_prepare_params.epoch = (u32)time(NULL);
 	rc = ecore_hw_prepare(edev, &hw_prepare_params);
 	if (rc) {
 		DP_ERR(edev, "hw prepare failed\n");
@@ -137,6 +138,7 @@ static int qed_load_firmware_data(struct ecore_dev *edev)
 
 	if (fstat(fd, &st) < 0) {
 		DP_NOTICE(edev, false, "Can't stat firmware file\n");
+		close(fd);
 		return -1;
 	}
 
@@ -158,9 +160,11 @@ static int qed_load_firmware_data(struct ecore_dev *edev)
 	if (edev->fw_len < 104) {
 		DP_NOTICE(edev, false, "Invalid fw size: %" PRIu64 "\n",
 			  edev->fw_len);
+		close(fd);
 		return -EINVAL;
 	}
 
+	close(fd);
 	return 0;
 }
 #endif
@@ -225,16 +229,12 @@ static int qed_slowpath_start(struct ecore_dev *edev,
 	struct ecore_hw_init_params hw_init_params;
 	struct qede_dev *qdev = (struct qede_dev *)edev;
 	int rc;
-#ifdef QED_ENC_SUPPORTED
-	struct ecore_tunn_start_params tunn_info;
-#endif
 
 #ifdef CONFIG_ECORE_BINARY_FW
 	if (IS_PF(edev)) {
 		rc = qed_load_firmware_data(edev);
 		if (rc) {
-			DP_NOTICE(edev, true,
-				  "Failed to find fw file %s\n", fw_file);
+			DP_ERR(edev, "Failed to find fw file %s\n", fw_file);
 			goto err;
 		}
 	}
@@ -270,22 +270,10 @@ static int qed_slowpath_start(struct ecore_dev *edev,
 
 	/* Start the slowpath */
 	memset(&hw_init_params, 0, sizeof(hw_init_params));
-#ifdef QED_ENC_SUPPORTED
-	memset(&tunn_info, 0, sizeof(tunn_info));
-	tunn_info.tunn_mode |= 1 << QED_MODE_VXLAN_TUNN |
-	    1 << QED_MODE_L2GRE_TUNN |
-	    1 << QED_MODE_IPGRE_TUNN |
-	    1 << QED_MODE_L2GENEVE_TUNN | 1 << QED_MODE_IPGENEVE_TUNN;
-	tunn_info.tunn_clss_vxlan = QED_TUNN_CLSS_MAC_VLAN;
-	tunn_info.tunn_clss_l2gre = QED_TUNN_CLSS_MAC_VLAN;
-	tunn_info.tunn_clss_ipgre = QED_TUNN_CLSS_MAC_VLAN;
-	hw_init_params.p_tunn = &tunn_info;
-#endif
 	hw_init_params.b_hw_start = true;
 	hw_init_params.int_mode = ECORE_INT_MODE_MSIX;
 	hw_init_params.allow_npar_tx_switch = allow_npar_tx_switching;
 	hw_init_params.bin_fw_data = data;
-	hw_init_params.epoch = (u32)time(NULL);
 	rc = ecore_hw_init(edev, &hw_init_params);
 	if (rc) {
 		DP_ERR(edev, "ecore_hw_init failed\n");
@@ -413,11 +401,6 @@ qed_fill_eth_dev_info(struct ecore_dev *edev, struct qed_dev_eth_info *info)
 		if (edev->num_hwfns > 1) {
 			ecore_vf_get_num_rxqs(&edev->hwfns[1], &queues);
 			info->num_queues += queues;
-			/* Restrict 100G VF to advertise 16 queues till the
-			 * required support is available to go beyond 16.
-			 */
-			info->num_queues = RTE_MIN(info->num_queues,
-						   ECORE_MAX_VF_CHAINS_PER_PF);
 		}
 
 		ecore_vf_get_num_vlan_filters(&edev->hwfns[0],
@@ -425,6 +408,8 @@ qed_fill_eth_dev_info(struct ecore_dev *edev, struct qed_dev_eth_info *info)
 
 		ecore_vf_get_port_mac(&edev->hwfns[0],
 				      (uint8_t *)&info->port_mac);
+
+		info->is_legacy = ecore_vf_get_pre_fp_hsi(&edev->hwfns[0]);
 	}
 
 	qed_fill_dev_info(edev, &info->common);

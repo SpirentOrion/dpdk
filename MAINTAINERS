@@ -24,13 +24,13 @@ General Project Administration
 M: Thomas Monjalon <thomas.monjalon@6wind.com>
 T: git://dpdk.org/dpdk
 F: MAINTAINERS
-F: scripts/check-maintainers.sh
-F: scripts/check-git-log.sh
-F: scripts/check-includes.sh
-F: scripts/checkpatches.sh
-F: scripts/git-log-fixes.sh
-F: scripts/load-devel-config
-F: scripts/test-build.sh
+F: devtools/check-maintainers.sh
+F: devtools/check-git-log.sh
+F: devtools/check-includes.sh
+F: devtools/checkpatches.sh
+F: devtools/git-log-fixes.sh
+F: devtools/load-devel-config
+F: devtools/test-build.sh
 
 Stable Branches
 ---------------
@@ -56,11 +56,11 @@ F: Makefile
 F: config/
 F: mk/
 F: pkg/
-F: scripts/auto-config-h.sh
-F: scripts/depdirs-rule.sh
-F: scripts/gen-build-mk.sh
-F: scripts/gen-config-h.sh
-F: scripts/relpath.sh
+F: buildtools/auto-config-h.sh
+F: buildtools/depdirs-rule.sh
+F: buildtools/gen-build-mk.sh
+F: buildtools/gen-config-h.sh
+F: buildtools/relpath.sh
 F: doc/build-sdk-quick.txt
 F: doc/guides/prog_guide/build_app.rst
 F: doc/guides/prog_guide/dev_kit_*
@@ -74,7 +74,7 @@ F: scripts/validate-abi.sh
 
 Driver information
 F: buildtools/pmdinfogen/
-F: tools/dpdk-pmdinfo.py
+F: usertools/dpdk-pmdinfo.py
 F: doc/guides/tools/pmdinfo.rst
 
 
@@ -243,6 +243,10 @@ M: Thomas Monjalon <thomas.monjalon@6wind.com>
 F: lib/librte_ether/
 F: scripts/test-null.sh
 
+Flow API
+M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
+F: lib/librte_ether/rte_flow*
+
 Crypto API
 M: Declan Doherty <declan.doherty@intel.com>
 F: lib/librte_cryptodev/
@@ -252,6 +256,8 @@ F: examples/l2fwd-crypto/
 
 Networking Drivers
 ------------------
+M: Ferruh Yigit <ferruh.yigit@intel.com>
+T: git://dpdk.org/next/dpdk-next-net
 
 Link bonding
 M: Declan Doherty <declan.doherty@intel.com>
@@ -305,7 +311,7 @@ F: drivers/net/enic/
 F: doc/guides/nics/enic.rst
 
 Combo szedata2
-M: Matej Vido <matejvido@gmail.com>
+M: Matej Vido <vido@cesnet.cz>
 F: drivers/net/szedata2/
 F: doc/guides/nics/szedata2.rst
 
@@ -335,11 +341,13 @@ F: drivers/net/fm10k/
 
 Mellanox mlx4
 M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
+M: Nelio Laranjeiro <nelio.laranjeiro@6wind.com>
 F: drivers/net/mlx4/
 F: doc/guides/nics/mlx4.rst
 
 Mellanox mlx5
 M: Adrien Mazarguil <adrien.mazarguil@6wind.com>
+M: Nelio Laranjeiro <nelio.laranjeiro@6wind.com>
 F: drivers/net/mlx5/
 F: doc/guides/nics/mlx5.rst
 
@@ -349,34 +357,35 @@ F: drivers/net/nfp/
 F: doc/guides/nics/nfp.rst
 
 QLogic bnx2x
-M: Sony Chacko <sony.chacko@qlogic.com>
-M: Harish Patil <harish.patil@qlogic.com>
-M: Rasesh Mody <rasesh.mody@qlogic.com>
+M: Harish Patil <harish.patil@cavium.com>
+M: Rasesh Mody <rasesh.mody@cavium.com>
 F: drivers/net/bnx2x/
 F: doc/guides/nics/bnx2x.rst
 
 QLogic qede PMD
-M: Harish Patil <harish.patil@qlogic.com>
-M: Rasesh Mody <rasesh.mody@qlogic.com>
-M: Sony Chacko <sony.chacko@qlogic.com>
+M: Rasesh Mody <rasesh.mody@cavium.com>
+M: Harish Patil <harish.patil@cavium.com>
 F: drivers/net/qede/
 F: doc/guides/nics/qede.rst
 
-RedHat virtio
-M: Huawei Xie <huawei.xie@intel.com>
-M: Yuanhan Liu <yuanhan.liu@linux.intel.com>
-T: git://dpdk.org/next/dpdk-next-virtio
-F: drivers/net/virtio/
-F: doc/guides/nics/virtio.rst
-F: lib/librte_vhost/
-F: doc/guides/prog_guide/vhost_lib.rst
-F: examples/vhost/
-F: doc/guides/sample_app_ug/vhost.rst
+Solarflare sfc_efx
+M: Andrew Rybchenko <arybchenko@solarflare.com>
+F: drivers/net/sfc/
+F: doc/guides/nics/sfc_efx.rst
+F: doc/guides/nics/features/sfc_efx.ini
 
 VMware vmxnet3
 M: Yong Wang <yongwang@vmware.com>
 F: drivers/net/vmxnet3/
 F: doc/guides/nics/vmxnet3.rst
+
+Vhost-user
+M: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+T: git://dpdk.org/next/dpdk-next-virtio
+F: lib/librte_vhost/
+F: doc/guides/prog_guide/vhost_lib.rst
+F: examples/vhost/
+F: doc/guides/sample_app_ug/vhost.rst
 
 Vhost PMD
 M: Tetsuya Mukawa <mtetsuyah@gmail.com>
@@ -384,11 +393,21 @@ M: Yuanhan Liu <yuanhan.liu@linux.intel.com>
 T: git://dpdk.org/next/dpdk-next-virtio
 F: drivers/net/vhost/
 
+Virtio PMD
+M: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+T: git://dpdk.org/next/dpdk-next-virtio
+F: drivers/net/virtio/
+F: doc/guides/nics/virtio.rst
+
 PCAP PMD
-M: Nicolás Pernas Maradei <nicolas.pernas.maradei@emutex.com>
 M: Ferruh Yigit <ferruh.yigit@intel.com>
 F: drivers/net/pcap/
 F: doc/guides/nics/pcap_ring.rst
+
+Tap PMD
+M: Keith Wiles <keith.wiles@intel.com>
+F: drivers/net/tap/
+F: doc/guides/nics/tap.rst
 
 Ring PMD
 M: Bruce Richardson <bruce.richardson@intel.com>
@@ -406,6 +425,12 @@ Crypto Drivers
 --------------
 M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
 T: git://dpdk.org/next/dpdk-next-crypto
+
+ARMv8 Crypto PMD
+M: Zbigniew Bodek <zbigniew.bodek@caviumnetworks.com>
+M: Jerin Jacob <jerin.jacob@caviumnetworks.com>
+F: drivers/crypto/armv8/
+F: doc/guides/cryptodevs/armv8.rst
 
 Intel AES-NI GCM PMD
 M: Declan Doherty <declan.doherty@intel.com>
@@ -448,6 +473,11 @@ Null Crypto PMD
 M: Declan Doherty <declan.doherty@intel.com>
 F: drivers/crypto/null/
 F: doc/guides/cryptodevs/null.rst
+
+Crypto Scheduler PMD
+M: Fan Zhang <roy.fan.zhang@intel.com>
+F: drivers/crypto/scheduler/
+F: doc/guides/cryptodevs/scheduler.rst
 
 
 Packet processing
@@ -524,6 +554,15 @@ F: app/test-acl/
 F: app/test/test_acl.*
 F: examples/l3fwd-acl/
 F: doc/guides/sample_app_ug/l3_forward_access_ctrl.rst
+
+EFD
+M: Byron Marohn <byron.marohn@intel.com>
+M: Pablo de Lara Guarch <pablo.de.lara.guarch@intel.com>
+F: lib/librte_efd/
+F: doc/guides/prog_guide/efd_lib.rst
+F: app/test/test_efd*
+F: examples/server_node_efd/
+F: doc/guides/sample_app_ug/server_node_efd.rst
 
 Hashes
 M: Bruce Richardson <bruce.richardson@intel.com>
@@ -612,13 +651,18 @@ F: app/test/virtual_pmd.c
 F: app/test/virtual_pmd.h
 
 Driver testing tool
-M: Pablo de Lara <pablo.de.lara.guarch@intel.com>
+M: Jingjing Wu <jingjing.wu@intel.com>
 F: app/test-pmd/
 F: doc/guides/testpmd_app_ug/
 
-Dump tool
+Crypto performance test application
+M: Declan Doherty <declan.doherty@intel.com>
+F: app/test-crypto-perf/
+F: doc/guides/tools/cryptoperf.rst
+
+Procinfo tool
 M: Maryam Tahhan <maryam.tahhan@intel.com>
-M: John McNamara <john.mcnamara@intel.com>
+M: Reshma Pattan <reshma.pattan@intel.com>
 F: app/proc_info/
 F: doc/guides/tools/proc_info.rst
 
@@ -675,7 +719,7 @@ F: examples/netmap_compat/
 F: doc/guides/sample_app_ug/netmap_compatibility.rst
 
 L-threads - EXPERIMENTAL
-M: Ian Betts <ian.betts@intel.com>
+M: John McNamara <john.mcnamara@intel.com>
 F: examples/performance-thread/
 F: doc/guides/sample_app_ug/performance_thread.rst
 

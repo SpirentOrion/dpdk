@@ -56,12 +56,12 @@ extern "C" {
 /**
  * Major version/year number i.e. the yy in yy.mm.z
  */
-#define RTE_VER_YEAR 16
+#define RTE_VER_YEAR 17
 
 /**
  * Minor version/month number i.e. the mm in yy.mm.z
  */
-#define RTE_VER_MONTH 11
+#define RTE_VER_MONTH 2
 
 /**
  * Patch level number i.e. the z in yy.mm.z

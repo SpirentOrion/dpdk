@@ -88,7 +88,6 @@ struct pmd_internals {
 
 
 static struct ether_addr eth_addr = { .addr_bytes = {0} };
-static const char *drivername = "Null PMD";
 static struct rte_eth_link pmd_link = {
 	.link_speed = ETH_SPEED_NUM_10G,
 	.link_duplex = ETH_LINK_FULL_DUPLEX,
@@ -295,13 +294,11 @@ eth_dev_info(struct rte_eth_dev *dev,
 		return;
 
 	internals = dev->data->dev_private;
-	dev_info->driver_name = drivername;
 	dev_info->max_mac_addrs = 1;
 	dev_info->max_rx_pktlen = (uint32_t)-1;
 	dev_info->max_rx_queues = RTE_DIM(internals->rx_null_queues);
 	dev_info->max_tx_queues = RTE_DIM(internals->tx_null_queues);
 	dev_info->min_rx_bufsize = 0;
-	dev_info->pci_dev = NULL;
 	dev_info->reta_size = internals->reta_size;
 	dev_info->flow_type_rss_offloads = internals->flow_type_rss_offloads;
 }
@@ -480,6 +477,8 @@ static const struct eth_dev_ops ops = {
 	.rss_hash_conf_get = eth_rss_hash_conf_get
 };
 
+static struct rte_vdev_driver pmd_null_drv;
+
 int
 eth_dev_null_create(const char *name,
 		const unsigned numa_node,
@@ -550,12 +549,10 @@ eth_dev_null_create(const char *name,
 	eth_dev->data = data;
 	eth_dev->dev_ops = &ops;
 
-	TAILQ_INIT(&eth_dev->link_intr_cbs);
-
 	eth_dev->driver = NULL;
 	data->dev_flags = RTE_ETH_DEV_DETACHABLE;
 	data->kdrv = RTE_KDRV_NONE;
-	data->drv_name = drivername;
+	data->drv_name = pmd_null_drv.driver.name;
 	data->numa_node = numa_node;
 
 	/* finally assign rx and tx ops */

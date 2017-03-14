@@ -55,32 +55,30 @@ Cipher algorithms:
 Hash algorithms:
 
 * RTE_CRYPTO_HASH_SHA1_HMAC
+* RTE_CRYPTO_HASH_SHA224_HMAC
 * RTE_CRYPTO_HASH_SHA256_HMAC
+* RTE_CRYPTO_HASH_SHA384_HMAC
 * RTE_CRYPTO_HASH_SHA512_HMAC
 
 Limitations
 -----------
 
 * Chained mbufs are not supported.
-* Hash only is not supported.
-* Cipher only is not supported.
 * Only in-place is currently supported (destination address is the same as source address).
 * Only supports session-oriented API implementation (session-less APIs are not supported).
-*  Not performance tuned.
 
 Installation
 ------------
 
-To build DPDK with the AESNI_MB_PMD the user is required to download the mult-
-buffer library from `here <https://downloadcenter.intel.com/download/22972>`_
-and compile it on their user system before building DPDK. When building the
-multi-buffer library it is necessary to have YASM package installed and also
-requires the overriding of YASM path when building, as a path is hard coded in
-the Makefile of the release package.
+To build DPDK with the AESNI_MB_PMD the user is required to download the multi-buffer
+library from `here <https://github.com/01org/intel-ipsec-mb>`_
+and compile it on their user system before building DPDK.
+The latest version of the library supported by this PMD is v0.44, which
+can be downloaded in `<https://github.com/01org/intel-ipsec-mb/archive/v0.44.zip>`_.
 
 .. code-block:: console
 
-	make YASM=/usr/bin/yasm
+	make
 
 Initialization
 --------------

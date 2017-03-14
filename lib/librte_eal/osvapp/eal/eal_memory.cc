@@ -57,10 +57,7 @@
 phys_addr_t
 rte_mem_virt2phy(const void *virtaddr)
 {
-	/* XXX not implemented. This function is only used by
-	 * rte_mempool_virt2phy() when hugepages are disabled. */
-	(void)virtaddr;
-	return RTE_BAD_PHYS_ADDR;
+	return mmu::virt_to_phys(const_cast<void *>(virtaddr));
 }
 
 int

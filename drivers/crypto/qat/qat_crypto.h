@@ -43,6 +43,7 @@
  */
 #define ALIGN_POW2_ROUNDUP(num, align) \
 	(((num) + (align) - 1) & ~((align) - 1))
+#define QAT_64_BTYE_ALIGN_MASK (~0x3f)
 
 /**
  * Structure associated with each queue.
@@ -68,6 +69,9 @@ struct qat_qp {
 	struct	qat_queue	tx_q;
 	struct	qat_queue	rx_q;
 	struct	rte_cryptodev_stats stats;
+	struct rte_mempool *op_cookie_pool;
+	void **op_cookies;
+	uint32_t nb_descriptors;
 } __rte_cache_aligned;
 
 /** private data structure for each QAT device */

@@ -72,6 +72,15 @@
 #define VIRTIO_SIMPLE_FLAGS ((uint32_t)ETH_TXQ_FLAGS_NOMULTSEGS | \
 	ETH_TXQ_FLAGS_NOOFFLOADS)
 
+int
+virtio_dev_rx_queue_done(void *rxq, uint16_t offset)
+{
+	struct virtnet_rx *rxvq = rxq;
+	struct virtqueue *vq = rxvq->vq;
+
+	return VIRTQUEUE_NUSED(vq) >= offset;
+}
+
 static void
 vq_ring_free_chain(struct virtqueue *vq, uint16_t desc_idx)
 {
@@ -124,7 +133,7 @@ virtqueue_dequeue_burst_rx(struct virtqueue *vq, struct rte_mbuf **rx_pkts,
 		cookie = (struct rte_mbuf *)vq->vq_descx[desc_idx].cookie;
 
 		if (unlikely(cookie == NULL)) {
-			PMD_DRV_LOG(ERR, "vring descriptor with no mbuf cookie at %u\n",
+			PMD_DRV_LOG(ERR, "vring descriptor with no mbuf cookie at %u",
 				vq->vq_used_cons_idx);
 			break;
 		}
@@ -258,6 +267,12 @@ tx_offload_enabled(struct virtio_hw *hw)
 		vtpci_with_feature(hw, VIRTIO_NET_F_HOST_TSO6);
 }
 
+/* avoid write operation when necessary, to lessen cache issues */
+#define ASSIGN_UNLESS_EQUAL(var, val) do {	\
+	if ((var) != (val))			\
+		(var) = (val);			\
+} while (0)
+
 static inline void
 virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 		       uint16_t needed, int use_indirect, int can_push)
@@ -286,8 +301,14 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 		hdr = (struct virtio_net_hdr *)
 			rte_pktmbuf_prepend(cookie, head_size);
 		/* if offload disabled, it is not zeroed below, do it now */
-		if (offload == 0)
-			memset(hdr, 0, head_size);
+		if (offload == 0) {
+			ASSIGN_UNLESS_EQUAL(hdr->csum_start, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->csum_offset, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->flags, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->gso_type, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->gso_size, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->hdr_len, 0);
+		}
 	} else if (use_indirect) {
 		/* setup tx ring slot to point to indirect
 		 * descriptor list stored in reserved region.
@@ -337,9 +358,9 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 			break;
 
 		default:
-			hdr->csum_start = 0;
-			hdr->csum_offset = 0;
-			hdr->flags = 0;
+			ASSIGN_UNLESS_EQUAL(hdr->csum_start, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->csum_offset, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->flags, 0);
 			break;
 		}
 
@@ -355,9 +376,9 @@ virtqueue_enqueue_xmit(struct virtnet_tx *txvq, struct rte_mbuf *cookie,
 				cookie->l3_len +
 				cookie->l4_len;
 		} else {
-			hdr->gso_type = 0;
-			hdr->gso_size = 0;
-			hdr->hdr_len = 0;
+			ASSIGN_UNLESS_EQUAL(hdr->gso_type, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->gso_size, 0);
+			ASSIGN_UNLESS_EQUAL(hdr->hdr_len, 0);
 		}
 	}
 
@@ -1015,7 +1036,8 @@ virtio_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		}
 
 		/* optimize ring usage */
-		if (vtpci_with_feature(hw, VIRTIO_F_ANY_LAYOUT) &&
+		if ((vtpci_with_feature(hw, VIRTIO_F_ANY_LAYOUT) ||
+		      vtpci_with_feature(hw, VIRTIO_F_VERSION_1)) &&
 		    rte_mbuf_refcnt_read(txm) == 1 &&
 		    RTE_MBUF_DIRECT(txm) &&
 		    txm->nb_segs == 1 &&

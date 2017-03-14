@@ -15,6 +15,7 @@
 #include <rte_ether.h>
 #include <rte_ethdev.h>
 #include <rte_dev.h>
+#include <rte_ip.h>
 
 /* ecore includes */
 #include "base/bcm_osal.h"
@@ -31,6 +32,8 @@
 #include "base/ecore_iov_api.h"
 #include "base/ecore_cxt.h"
 #include "base/nvm_cfg.h"
+#include "base/ecore_iov_api.h"
+#include "base/ecore_sp_commands.h"
 
 #include "qede_logs.h"
 #include "qede_if.h"
@@ -43,8 +46,8 @@
 
 /* Driver versions */
 #define QEDE_PMD_VER_PREFIX		"QEDE PMD"
-#define QEDE_PMD_VERSION_MAJOR		1
-#define QEDE_PMD_VERSION_MINOR	        2
+#define QEDE_PMD_VERSION_MAJOR		2
+#define QEDE_PMD_VERSION_MINOR	        0
 #define QEDE_PMD_VERSION_REVISION       0
 #define QEDE_PMD_VERSION_PATCH	        1
 
@@ -89,26 +92,44 @@
 	struct ecore_dev *edev = &qdev->edev;			\
 }
 
-/************* QLogic 25G/40G/100G vendor/devices ids *************/
-#define PCI_VENDOR_ID_QLOGIC            0x1077
+/************* QLogic 10G/25G/40G/50G/100G vendor/devices ids *************/
+#define PCI_VENDOR_ID_QLOGIC                   0x1077
 
-#define CHIP_NUM_57980E                 0x1634
-#define CHIP_NUM_57980S                 0x1629
-#define CHIP_NUM_VF                     0x1630
-#define CHIP_NUM_57980S_40              0x1634
-#define CHIP_NUM_57980S_25              0x1656
-#define CHIP_NUM_57980S_IOV             0x1664
-#define CHIP_NUM_57980S_100             0x1644
+#define CHIP_NUM_57980E                        0x1634
+#define CHIP_NUM_57980S                        0x1629
+#define CHIP_NUM_VF                            0x1630
+#define CHIP_NUM_57980S_40                     0x1634
+#define CHIP_NUM_57980S_25                     0x1656
+#define CHIP_NUM_57980S_IOV                    0x1664
+#define CHIP_NUM_57980S_100                    0x1644
+#define CHIP_NUM_57980S_50                     0x1654
+#define CHIP_NUM_AH_50G	                       0x8070
+#define CHIP_NUM_AH_10G                        0x8071
+#define CHIP_NUM_AH_40G			       0x8072
+#define CHIP_NUM_AH_25G			       0x8073
+#define CHIP_NUM_AH_IOV			       0x8090
 
-#define PCI_DEVICE_ID_NX2_57980E        CHIP_NUM_57980E
-#define PCI_DEVICE_ID_NX2_57980S        CHIP_NUM_57980S
-#define PCI_DEVICE_ID_NX2_VF            CHIP_NUM_VF
-#define PCI_DEVICE_ID_57980S_40         CHIP_NUM_57980S_40
-#define PCI_DEVICE_ID_57980S_25         CHIP_NUM_57980S_25
-#define PCI_DEVICE_ID_57980S_IOV        CHIP_NUM_57980S_IOV
-#define PCI_DEVICE_ID_57980S_100        CHIP_NUM_57980S_100
+#define PCI_DEVICE_ID_QLOGIC_NX2_57980E        CHIP_NUM_57980E
+#define PCI_DEVICE_ID_QLOGIC_NX2_57980S        CHIP_NUM_57980S
+#define PCI_DEVICE_ID_QLOGIC_NX2_VF            CHIP_NUM_VF
+#define PCI_DEVICE_ID_QLOGIC_57980S_40         CHIP_NUM_57980S_40
+#define PCI_DEVICE_ID_QLOGIC_57980S_25         CHIP_NUM_57980S_25
+#define PCI_DEVICE_ID_QLOGIC_57980S_IOV        CHIP_NUM_57980S_IOV
+#define PCI_DEVICE_ID_QLOGIC_57980S_100        CHIP_NUM_57980S_100
+#define PCI_DEVICE_ID_QLOGIC_57980S_50         CHIP_NUM_57980S_50
+#define PCI_DEVICE_ID_QLOGIC_AH_50G            CHIP_NUM_AH_50G
+#define PCI_DEVICE_ID_QLOGIC_AH_10G            CHIP_NUM_AH_10G
+#define PCI_DEVICE_ID_QLOGIC_AH_40G            CHIP_NUM_AH_40G
+#define PCI_DEVICE_ID_QLOGIC_AH_25G            CHIP_NUM_AH_25G
+#define PCI_DEVICE_ID_QLOGIC_AH_IOV            CHIP_NUM_AH_IOV
+
+
+#define QEDE_VXLAN_DEF_PORT		8472
 
 extern char fw_file[];
+
+/* Number of PF connections - 32 RX + 32 TX */
+#define QEDE_PF_NUM_CONNS		(64)
 
 /* Port/function states */
 enum qede_dev_state {
@@ -123,6 +144,18 @@ struct qede_vlan_entry {
 	uint16_t vid;
 };
 
+struct qede_mcast_entry {
+	struct ether_addr mac;
+	SLIST_ENTRY(qede_mcast_entry) list;
+};
+
+struct qede_ucast_entry {
+	struct ether_addr mac;
+	uint16_t vlan;
+	uint16_t vni;
+	SLIST_ENTRY(qede_ucast_entry) list;
+};
+
 /*
  *  Structure to store private data for each port.
  */
@@ -135,8 +168,11 @@ struct qede_dev {
 	struct qede_fastpath *fp_array;
 	uint8_t num_tc;
 	uint16_t mtu;
-	bool rss_enabled;
-	struct qed_update_vport_rss_params rss_params;
+	bool rss_enable;
+	struct rte_eth_rss_conf rss_conf;
+	uint16_t rss_ind_table[ECORE_RSS_IND_TABLE_SIZE];
+	uint64_t rss_hf;
+	uint8_t rss_key_len;
 	uint32_t flags;
 	bool gro_disable;
 	uint16_t num_queues;
@@ -147,7 +183,13 @@ struct qede_dev {
 	uint16_t configured_vlans;
 	bool accept_any_vlan;
 	struct ether_addr primary_mac;
+	SLIST_HEAD(mc_list_head, qede_mcast_entry) mc_list_head;
+	uint16_t num_mc_addr;
+	SLIST_HEAD(uc_list_head, qede_ucast_entry) uc_list_head;
+	uint16_t num_uc_addr;
 	bool handle_hw_err;
+	uint16_t num_tunn_filters;
+	uint16_t vxlan_filter_type;
 	char drv_ver[QEDE_PMD_DRV_VER_STR_SIZE];
 };
 
@@ -161,6 +203,10 @@ static int qede_rss_hash_update(struct rte_eth_dev *eth_dev,
 static int qede_rss_reta_update(struct rte_eth_dev *eth_dev,
 				struct rte_eth_rss_reta_entry64 *reta_conf,
 				uint16_t reta_size);
+
+static void qede_init_rss_caps(uint8_t *rss_caps, uint64_t hf);
+
+static inline uint32_t qede_rx_cqe_to_pkt_type(uint16_t flags);
 
 /* Non-static functions */
 void qede_init_rss_caps(uint8_t *rss_caps, uint64_t hf);

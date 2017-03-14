@@ -19,7 +19,6 @@ DPDK_2.2 {
 	rte_eth_dev_bypass_ver_show;
 	rte_eth_dev_bypass_wd_reset;
 	rte_eth_dev_bypass_wd_timeout_show;
-	rte_eth_dev_callback_process;
 	rte_eth_dev_callback_register;
 	rte_eth_dev_callback_unregister;
 	rte_eth_dev_close;
@@ -61,10 +60,6 @@ DPDK_2.2 {
 	rte_eth_dev_set_mtu;
 	rte_eth_dev_set_rx_queue_stats_mapping;
 	rte_eth_dev_set_tx_queue_stats_mapping;
-	rte_eth_dev_set_vf_rx;
-	rte_eth_dev_set_vf_rxmode;
-	rte_eth_dev_set_vf_tx;
-	rte_eth_dev_set_vf_vlan_filter;
 	rte_eth_dev_set_vlan_offload;
 	rte_eth_dev_set_vlan_pvid;
 	rte_eth_dev_set_vlan_strip_on_queue;
@@ -94,7 +89,6 @@ DPDK_2.2 {
 	rte_eth_rx_queue_info_get;
 	rte_eth_rx_queue_setup;
 	rte_eth_set_queue_rate_limit;
-	rte_eth_set_vf_rate_limit;
 	rte_eth_stats;
 	rte_eth_stats_get;
 	rte_eth_stats_reset;
@@ -147,3 +141,16 @@ DPDK_16.11 {
 	rte_eth_dev_pci_remove;
 
 } DPDK_16.07;
+
+DPDK_17.02 {
+	global:
+
+	_rte_eth_dev_reset;
+	rte_eth_dev_fw_version_get;
+	rte_flow_create;
+	rte_flow_destroy;
+	rte_flow_flush;
+	rte_flow_query;
+	rte_flow_validate;
+
+} DPDK_16.11;

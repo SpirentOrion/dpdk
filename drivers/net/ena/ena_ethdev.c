@@ -39,6 +39,7 @@
 #include <rte_errno.h>
 #include <rte_version.h>
 #include <rte_eal_memconfig.h>
+#include <rte_net.h>
 
 #include "ena_ethdev.h"
 #include "ena_logs.h"
@@ -168,7 +169,15 @@ static const struct ena_stats ena_stats_ena_com_strings[] = {
 #define PCI_DEVICE_ID_ENA_VF	0xEC20
 #define PCI_DEVICE_ID_ENA_LLQ_VF	0xEC21
 
-static struct rte_pci_id pci_id_ena_map[] = {
+#define	ENA_TX_OFFLOAD_MASK	(\
+	PKT_TX_L4_MASK |         \
+	PKT_TX_IP_CKSUM |        \
+	PKT_TX_TCP_SEG)
+
+#define	ENA_TX_OFFLOAD_NOTSUP_MASK	\
+	(PKT_TX_OFFLOAD_MASK ^ ENA_TX_OFFLOAD_MASK)
+
+static const struct rte_pci_id pci_id_ena_map[] = {
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_AMAZON, PCI_DEVICE_ID_ENA_VF) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_AMAZON, PCI_DEVICE_ID_ENA_LLQ_VF) },
 	{ .device_id = 0 },
@@ -179,6 +188,8 @@ static int ena_device_init(struct ena_com_dev *ena_dev,
 static int ena_dev_configure(struct rte_eth_dev *dev);
 static uint16_t eth_ena_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 				  uint16_t nb_pkts);
+static uint16_t eth_ena_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts);
 static int ena_tx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 			      uint16_t nb_desc, unsigned int socket_id,
 			      const struct rte_eth_txconf *tx_conf);
@@ -216,7 +227,7 @@ static int ena_rss_reta_query(struct rte_eth_dev *dev,
 			      uint16_t reta_size);
 static int ena_get_sset_count(struct rte_eth_dev *dev, int sset);
 
-static struct eth_dev_ops ena_dev_ops = {
+static const struct eth_dev_ops ena_dev_ops = {
 	.dev_configure        = ena_dev_configure,
 	.dev_infos_get        = ena_infos_get,
 	.rx_queue_setup       = ena_rx_queue_setup,
@@ -357,12 +368,9 @@ static void ena_config_host_info(struct ena_com_dev *ena_dev)
 
 	rc = ena_com_set_host_attributes(ena_dev);
 	if (rc) {
-		if (rc == -EPERM)
-			RTE_LOG(ERR, PMD, "Cannot set host attributes\n");
-		else
-			RTE_LOG(ERR, PMD, "Cannot set host attributes\n");
-
-		goto err;
+		RTE_LOG(ERR, PMD, "Cannot set host attributes\n");
+		if (rc != -EPERM)
+			goto err;
 	}
 
 	return;
@@ -413,11 +421,9 @@ static void ena_config_debug_area(struct ena_adapter *adapter)
 
 	rc = ena_com_set_host_attributes(&adapter->ena_dev);
 	if (rc) {
-		if (rc == -EPERM)
-			RTE_LOG(WARNING, PMD, "Cannot set host attributes\n");
-		else
-			RTE_LOG(ERR, PMD, "Cannot set host attributes\n");
-		goto err;
+		RTE_LOG(WARNING, PMD, "Cannot set host attributes\n");
+		if (rc != -EPERM)
+			goto err;
 	}
 
 	return;
@@ -735,7 +741,7 @@ static int ena_queue_restart_all(struct rte_eth_dev *dev,
 
 			if (rc) {
 				PMD_INIT_LOG(ERR,
-					     "failed to restart queue %d type(%d)\n",
+					     "failed to restart queue %d type(%d)",
 					     i, ring_type);
 				return -1;
 			}
@@ -761,7 +767,7 @@ static int ena_check_valid_conf(struct ena_adapter *adapter)
 	uint32_t max_frame_len = ena_get_mtu_conf(adapter);
 
 	if (max_frame_len > adapter->max_mtu) {
-		PMD_INIT_LOG(ERR, "Unsupported MTU of %d\n", max_frame_len);
+		PMD_INIT_LOG(ERR, "Unsupported MTU of %d", max_frame_len);
 		return -1;
 	}
 
@@ -788,7 +794,7 @@ ena_calc_queue_size(struct ena_com_dev *ena_dev,
 		queue_size = rte_align32pow2(queue_size >> 1);
 
 	if (queue_size == 0) {
-		PMD_INIT_LOG(ERR, "Invalid queue size\n");
+		PMD_INIT_LOG(ERR, "Invalid queue size");
 		return -EFAULT;
 	}
 
@@ -926,7 +932,7 @@ static int ena_queue_restart(struct ena_ring *ring)
 
 	rc = ena_populate_rx_queue(ring, ring->ring_size);
 	if ((unsigned int)rc != ring->ring_size) {
-		PMD_INIT_LOG(ERR, "Failed to populate rx ring !\n");
+		PMD_INIT_LOG(ERR, "Failed to populate rx ring !");
 		return (-1);
 	}
 
@@ -1228,13 +1234,13 @@ static int ena_device_init(struct ena_com_dev *ena_dev,
 		goto err_mmio_read_less;
 	}
 
-	ena_config_host_info(ena_dev);
-
 	/* To enable the msix interrupts the driver needs to know the number
 	 * of queues. So the driver uses polling mode to retrieve this
 	 * information.
 	 */
 	ena_com_set_admin_polling_mode(ena_dev, true);
+
+	ena_config_host_info(ena_dev);
 
 	/* Get Device Attributes and features */
 	rc = ena_com_get_dev_attr_feat(ena_dev, get_feat_ctx);
@@ -1272,16 +1278,17 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	eth_dev->dev_ops = &ena_dev_ops;
 	eth_dev->rx_pkt_burst = &eth_ena_recv_pkts;
 	eth_dev->tx_pkt_burst = &eth_ena_xmit_pkts;
+	eth_dev->tx_pkt_prepare = &eth_ena_prep_pkts;
 	adapter->rte_eth_dev_data = eth_dev->data;
 	adapter->rte_dev = eth_dev;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
 
-	pci_dev = eth_dev->pci_dev;
+	pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
 	adapter->pdev = pci_dev;
 
-	PMD_INIT_LOG(INFO, "Initializing %x:%x:%x.%d\n",
+	PMD_INIT_LOG(INFO, "Initializing %x:%x:%x.%d",
 		     pci_dev->addr.domain,
 		     pci_dev->addr.bus,
 		     pci_dev->addr.devid,
@@ -1298,7 +1305,7 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	else if (adapter->regs)
 		ena_dev->tx_mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_HOST;
 	else
-		PMD_INIT_LOG(CRIT, "Failed to access registers BAR(%d)\n",
+		PMD_INIT_LOG(CRIT, "Failed to access registers BAR(%d)",
 			     ENA_REGS_BAR);
 
 	ena_dev->reg_bar = adapter->regs;
@@ -1312,7 +1319,7 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	/* device specific initialization routine */
 	rc = ena_device_init(ena_dev, &get_feat_ctx);
 	if (rc) {
-		PMD_INIT_LOG(CRIT, "Failed to init ENA device\n");
+		PMD_INIT_LOG(CRIT, "Failed to init ENA device");
 		return -1;
 	}
 
@@ -1320,7 +1327,7 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 		if (get_feat_ctx.max_queues.max_llq_num == 0) {
 			PMD_INIT_LOG(ERR,
 				     "Trying to use LLQ but llq_num is 0.\n"
-				     "Fall back into regular queues.\n");
+				     "Fall back into regular queues.");
 			ena_dev->tx_mem_queue_type =
 				ENA_ADMIN_PLACEMENT_POLICY_HOST;
 			adapter->num_queues =
@@ -1348,6 +1355,10 @@ static int eth_ena_dev_init(struct rte_eth_dev *eth_dev)
 	/* Set max MTU for this device */
 	adapter->max_mtu = get_feat_ctx.dev_attr.max_mtu;
 
+	/* set device support for TSO */
+	adapter->tso4_supported = get_feat_ctx.offload.tx &
+				  ENA_ADMIN_FEATURE_OFFLOAD_DESC_TSO_IPV4_MASK;
+
 	/* Copy MAC address and point DPDK to it */
 	eth_dev->data->mac_addrs = (struct ether_addr *)adapter->mac_addr;
 	ether_addr_copy((struct ether_addr *)get_feat_ctx.dev_attr.mac_addr,
@@ -1374,7 +1385,7 @@ static int ena_dev_configure(struct rte_eth_dev *dev)
 
 	if (!(adapter->state == ENA_ADAPTER_STATE_INIT ||
 	      adapter->state == ENA_ADAPTER_STATE_STOPPED)) {
-		PMD_INIT_LOG(ERR, "Illegal adapter state: %d\n",
+		PMD_INIT_LOG(ERR, "Illegal adapter state: %d",
 			     adapter->state);
 		return -1;
 	}
@@ -1436,6 +1447,8 @@ static void ena_infos_get(struct rte_eth_dev *dev,
 	ena_dev = &adapter->ena_dev;
 	ena_assert_msg(ena_dev != NULL, "Uninitialized device");
 
+	dev_info->pci_dev = RTE_DEV_TO_PCI(dev->device);
+
 	dev_info->speed_capa =
 			ETH_LINK_SPEED_1G   |
 			ETH_LINK_SPEED_2_5G |
@@ -1464,7 +1477,7 @@ static void ena_infos_get(struct rte_eth_dev *dev,
 			DEV_TX_OFFLOAD_UDP_CKSUM |
 			DEV_TX_OFFLOAD_TCP_CKSUM;
 
-	if (feat.offload.tx &
+	if (feat.offload.rx_supported &
 	    ENA_ADMIN_FEATURE_OFFLOAD_DESC_RX_L4_IPV4_CSUM_MASK)
 		rx_feat |= DEV_RX_OFFLOAD_IPV4_CKSUM |
 			DEV_RX_OFFLOAD_UDP_CKSUM  |
@@ -1568,6 +1581,66 @@ static uint16_t eth_ena_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 	rx_ring->next_to_clean = next_to_clean;
 
 	return recv_idx;
+}
+
+static uint16_t
+eth_ena_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts)
+{
+	int32_t ret;
+	uint32_t i;
+	struct rte_mbuf *m;
+	struct ena_ring *tx_ring = (struct ena_ring *)(tx_queue);
+	struct ipv4_hdr *ip_hdr;
+	uint64_t ol_flags;
+	uint16_t frag_field;
+
+	/* ENA needs partial checksum for TSO packets only, skip early */
+	if (!tx_ring->adapter->tso4_supported)
+		return nb_pkts;
+
+	for (i = 0; i != nb_pkts; i++) {
+		m = tx_pkts[i];
+		ol_flags = m->ol_flags;
+
+		if ((ol_flags & ENA_TX_OFFLOAD_NOTSUP_MASK) != 0 ||
+				(ol_flags & PKT_TX_L4_MASK) ==
+				PKT_TX_SCTP_CKSUM) {
+			rte_errno = -ENOTSUP;
+			return i;
+		}
+
+#ifdef RTE_LIBRTE_ETHDEV_DEBUG
+		ret = rte_validate_tx_offload(m);
+		if (ret != 0) {
+			rte_errno = ret;
+			return i;
+		}
+#endif
+
+		if (!(m->ol_flags & PKT_TX_IPV4))
+			continue;
+
+		ip_hdr = rte_pktmbuf_mtod_offset(m, struct ipv4_hdr *,
+						 m->l2_len);
+		frag_field = rte_be_to_cpu_16(ip_hdr->fragment_offset);
+		if (frag_field & IPV4_HDR_DF_FLAG)
+			continue;
+
+		/* In case we are supposed to TSO and have DF not set (DF=0)
+		 * hardware must be provided with partial checksum, otherwise
+		 * it will take care of necessary calculations.
+		 */
+
+		ret = rte_net_intel_cksum_flags_prepare(m,
+			ol_flags & ~PKT_TX_TCP_SEG);
+		if (ret != 0) {
+			rte_errno = ret;
+			return i;
+		}
+	}
+
+	return i;
 }
 
 static uint16_t eth_ena_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
@@ -1716,3 +1789,4 @@ static struct eth_driver rte_ena_pmd = {
 
 RTE_PMD_REGISTER_PCI(net_ena, rte_ena_pmd.pci_drv);
 RTE_PMD_REGISTER_PCI_TABLE(net_ena, pci_id_ena_map);
+RTE_PMD_REGISTER_KMOD_DEP(net_ena, "* igb_uio | uio_pci_generic | vfio");

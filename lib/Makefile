@@ -1,6 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2010-2015 Intel Corporation. All rights reserved.
+#   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
 #   All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
@@ -43,6 +43,7 @@ DIRS-$(CONFIG_RTE_LIBRTE_ETHER) += librte_ether
 DIRS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += librte_cryptodev
 DIRS-$(CONFIG_RTE_LIBRTE_VHOST) += librte_vhost
 DIRS-$(CONFIG_RTE_LIBRTE_HASH) += librte_hash
+DIRS-$(CONFIG_RTE_LIBRTE_EFD) += librte_efd
 DIRS-$(CONFIG_RTE_LIBRTE_LPM) += librte_lpm
 DIRS-$(CONFIG_RTE_LIBRTE_ACL) += librte_acl
 DIRS-$(CONFIG_RTE_LIBRTE_NET) += librte_net

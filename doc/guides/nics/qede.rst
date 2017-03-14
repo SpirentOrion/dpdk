@@ -32,7 +32,7 @@ QEDE Poll Mode Driver
 ======================
 
 The QEDE poll mode driver library (**librte_pmd_qede**) implements support
-for **QLogic FastLinQ QL4xxxx 25G/40G/100G CNA** family of adapters as well
+for **QLogic FastLinQ QL4xxxx 10G/25G/40G/50G/100G CNA** family of adapters as well
 as their virtual functions (VF) in SR-IOV context. It is supported on
 several standard Linux distros like RHEL7.x, SLES12.x and Ubuntu.
 It is compile-tested under FreeBSD OS.
@@ -59,27 +59,28 @@ Supported Features
 - MTU change
 - Multiprocess aware
 - Scatter-Gather
+- VXLAN tunneling offload
 
 Non-supported Features
 ----------------------
 
 - SR-IOV PF
-- Tunneling offloads
+- GENEVE and NVGRE Tunneling offloads
 - LRO/TSO
 - NPAR
 
 Supported QLogic Adapters
 -------------------------
 
-- QLogic FastLinQ QL4xxxx 10G/25G/40G/100G CNAs.
+- QLogic FastLinQ QL4xxxx 10G/25G/40G/50G/100G CNAs.
 
 Prerequisites
 -------------
 
-- Requires firmware version **8.10.x.** and management firmware
-  version **8.10.x or higher**. Firmware may be available
+- Requires firmware version **8.14.x.** and management firmware
+  version **8.14.x or higher**. Firmware may be available
   inbox in certain newer Linux distros under the standard directory
-  ``E.g. /lib/firmware/qed/qed_init_values-8.10.9.0.bin``
+  ``E.g. /lib/firmware/qed/qed_init_values-8.14.6.0.bin``
 
 - If the required firmware files are not available then visit
   `QLogic Driver Download Center <http://driverdownloads.qlogic.com>`_.
@@ -118,7 +119,7 @@ enabling debugging options may affect system performance.
 - ``CONFIG_RTE_LIBRTE_QEDE_FW`` (default **""**)
 
   Gives absolute path of firmware file.
-  ``Eg: "/lib/firmware/qed/qed_init_values_zipped-8.10.9.0.bin"``
+  ``Eg: "/lib/firmware/qed/qed_init_values_zipped-8.14.6.0.bin"``
   Empty string indicates driver will pick up the firmware file
   from the default location.
 
@@ -175,7 +176,7 @@ devices managed by ``librte_pmd_qede`` in Linux operating system.
 
    .. code-block:: console
 
-      ./tools/dpdk-devbind.py --bind igb_uio 0000:84:00.0 0000:84:00.1 \
+      ./usertools/dpdk-devbind.py --bind igb_uio 0000:84:00.0 0000:84:00.1 \
                                               0000:84:00.2 0000:84:00.3
 
 #. Start ``testpmd`` with basic parameters:

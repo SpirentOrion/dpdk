@@ -1357,19 +1357,6 @@ test_invalid_rules(void)
 		goto err;
 	}
 
-	rule.dst_mask_len = 0;
-	rule.src_mask_len = 0;
-	rule.data.userdata = 0;
-
-	/* try adding this rule (it should fail because userdata is invalid) */
-	ret = rte_acl_ipv4vlan_add_rules(acx, &rule, 1);
-	if (ret == 0) {
-		printf("Line %i: Adding a rule with invalid user data "
-				"should have failed!\n", __LINE__);
-		rte_acl_free(acx);
-		return -1;
-	}
-
 	rte_acl_free(acx);
 
 	return 0;
@@ -1508,26 +1495,6 @@ test_invalid_parameters(void)
 	if (result != 0) {
 		printf("Line %i: Adding 0 rules to ACL context failed!\n",
 			__LINE__);
-		rte_acl_free(acx);
-		return -1;
-	}
-
-	/* free ACL context */
-	rte_acl_free(acx);
-
-	/* set wrong rule_size so that adding any rules would fail */
-	param.rule_size = RTE_ACL_IPV4VLAN_RULE_SZ + 4;
-	acx = rte_acl_create(&param);
-	if (acx == NULL) {
-		printf("Line %i: ACL context creation failed!\n", __LINE__);
-		return -1;
-	}
-
-	/* try adding a rule with size different from context rule_size */
-	result = rte_acl_ipv4vlan_add_rules(acx, &rule, 1);
-	if (result == 0) {
-		printf("Line %i: Adding an invalid sized rule "
-				"should have failed!\n", __LINE__);
 		rte_acl_free(acx);
 		return -1;
 	}

@@ -46,27 +46,6 @@
 #define SNOW3G_MAX_BURST 8
 #define BYTE_LEN 8
 
-/**
- * Global static parameter used to create a unique name for each SNOW 3G
- * crypto device.
- */
-static unsigned unique_name_id;
-
-static inline int
-create_unique_device_name(char *name, size_t size)
-{
-	int ret;
-
-	if (name == NULL)
-		return -EINVAL;
-
-	ret = snprintf(name, size, "%s_%u", RTE_STR(CRYPTODEV_NAME_SNOW3G_PMD),
-			unique_name_id++);
-	if (ret < 0)
-		return ret;
-	return 0;
-}
-
 /** Get xform chain order. */
 static enum snow3g_operation
 snow3g_get_mode(const struct rte_crypto_sym_xform *xform)
@@ -137,7 +116,7 @@ snow3g_set_session_parameters(struct snow3g_session *sess,
 		if (cipher_xform->cipher.algo != RTE_CRYPTO_CIPHER_SNOW3G_UEA2)
 			return -EINVAL;
 		/* Initialize key */
-		sso_snow3g_init_key_sched(xform->cipher.key.data,
+		sso_snow3g_init_key_sched(cipher_xform->cipher.key.data,
 				&sess->pKeySched_cipher);
 	}
 
@@ -147,7 +126,7 @@ snow3g_set_session_parameters(struct snow3g_session *sess,
 			return -EINVAL;
 		sess->auth_op = auth_xform->auth.op;
 		/* Initialize key */
-		sso_snow3g_init_key_sched(xform->auth.key.data,
+		sso_snow3g_init_key_sched(auth_xform->auth.key.data,
 				&sess->pKeySched_hash);
 	}
 
@@ -329,6 +308,21 @@ process_ops(struct rte_crypto_op **ops, struct snow3g_session *session,
 {
 	unsigned i;
 	unsigned enqueued_ops, processed_ops;
+
+#ifdef RTE_LIBRTE_PMD_SNOW3G_DEBUG
+	for (i = 0; i < num_ops; i++) {
+		if (!rte_pktmbuf_is_contiguous(ops[i]->sym->m_src) ||
+				(ops[i]->sym->m_dst != NULL &&
+				!rte_pktmbuf_is_contiguous(
+						ops[i]->sym->m_dst))) {
+			SNOW3G_LOG_ERR("PMD supports only contiguous mbufs, "
+				"op (%p) provides noncontiguous mbuf as "
+				"source/destination buffer.\n", ops[i]);
+			ops[i]->status = RTE_CRYPTO_OP_STATUS_INVALID_ARGS;
+			return 0;
+		}
+	}
+#endif
 
 	switch (session->op) {
 	case SNOW3G_OP_ONLY_CIPHER:
@@ -548,13 +542,22 @@ snow3g_pmd_dequeue_burst(void *queue_pair,
 static int cryptodev_snow3g_remove(const char *name);
 
 static int
-cryptodev_snow3g_create(const char *name,
-		struct rte_crypto_vdev_init_params *init_params)
+cryptodev_snow3g_create(struct rte_crypto_vdev_init_params *init_params)
 {
 	struct rte_cryptodev *dev;
-	char crypto_dev_name[RTE_CRYPTODEV_NAME_MAX_LEN];
 	struct snow3g_private *internals;
 	uint64_t cpu_flags = 0;
+
+	if (init_params->name[0] == '\0') {
+		int ret = rte_cryptodev_pmd_create_dev_name(
+				init_params->name,
+				RTE_STR(CRYPTODEV_NAME_SNOW3G_PMD));
+
+		if (ret < 0) {
+			SNOW3G_LOG_ERR("failed to create unique name");
+			return ret;
+		}
+	}
 
 	/* Check CPU for supported vector instruction set */
 	if (rte_cpu_get_flag_enabled(RTE_CPUFLAG_SSE4_1))
@@ -564,15 +567,7 @@ cryptodev_snow3g_create(const char *name,
 		return -EFAULT;
 	}
 
-
-	/* Create a unique device name. */
-	if (create_unique_device_name(crypto_dev_name,
-			RTE_CRYPTODEV_NAME_MAX_LEN) != 0) {
-		SNOW3G_LOG_ERR("failed to create unique cryptodev name");
-		return -EINVAL;
-	}
-
-	dev = rte_cryptodev_pmd_virtual_dev_init(crypto_dev_name,
+	dev = rte_cryptodev_pmd_virtual_dev_init(init_params->name,
 			sizeof(struct snow3g_private), init_params->socket_id);
 	if (dev == NULL) {
 		SNOW3G_LOG_ERR("failed to create cryptodev vdev");
@@ -597,9 +592,10 @@ cryptodev_snow3g_create(const char *name,
 
 	return 0;
 init_error:
-	SNOW3G_LOG_ERR("driver %s: cryptodev_snow3g_create failed", name);
+	SNOW3G_LOG_ERR("driver %s: cryptodev_snow3g_create failed",
+			init_params->name);
 
-	cryptodev_snow3g_remove(crypto_dev_name);
+	cryptodev_snow3g_remove(init_params->name);
 	return -EFAULT;
 }
 
@@ -610,19 +606,23 @@ cryptodev_snow3g_probe(const char *name,
 	struct rte_crypto_vdev_init_params init_params = {
 		RTE_CRYPTODEV_VDEV_DEFAULT_MAX_NB_QUEUE_PAIRS,
 		RTE_CRYPTODEV_VDEV_DEFAULT_MAX_NB_SESSIONS,
-		rte_socket_id()
+		rte_socket_id(),
+		{0}
 	};
 
 	rte_cryptodev_parse_vdev_init_params(&init_params, input_args);
 
 	RTE_LOG(INFO, PMD, "Initialising %s on NUMA node %d\n", name,
 			init_params.socket_id);
+	if (init_params.name[0] != '\0')
+		RTE_LOG(INFO, PMD, "  User defined name = %s\n",
+			init_params.name);
 	RTE_LOG(INFO, PMD, "  Max number of queue pairs = %d\n",
 			init_params.max_nb_queue_pairs);
 	RTE_LOG(INFO, PMD, "  Max number of sessions = %d\n",
 			init_params.max_nb_sessions);
 
-	return cryptodev_snow3g_create(name, &init_params);
+	return cryptodev_snow3g_create(&init_params);
 }
 
 static int

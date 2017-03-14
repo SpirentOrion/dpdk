@@ -68,6 +68,33 @@ static int qed_stop_vport(struct ecore_dev *edev, uint8_t vport_id)
 	return 0;
 }
 
+bool qed_update_rss_parm_cmt(struct ecore_dev *edev, uint16_t *p_tbl)
+{
+	uint16_t max = 0, k;
+	bool rss_mode = 0; /* disable */
+	int divisor;
+
+	/* Find largest entry, since it's possible RSS needs to
+	 * be disabled [in case only 1 queue per-hwfn]
+	 */
+	for (k = 0; k < ECORE_RSS_IND_TABLE_SIZE; k++)
+		max = (max > p_tbl[k]) ?  max : p_tbl[k];
+
+	/* Either fix RSS values or disable RSS */
+	if (edev->num_hwfns < max + 1) {
+		divisor = (max + edev->num_hwfns - 1) / edev->num_hwfns;
+		DP_VERBOSE(edev, ECORE_MSG_SPQ,
+			   "CMT - fixing RSS values (modulo %02x)\n",
+			   divisor);
+		for (k = 0; k < ECORE_RSS_IND_TABLE_SIZE; k++)
+			p_tbl[k] = p_tbl[k] % divisor;
+
+		rss_mode = 1;
+	}
+
+	return rss_mode;
+}
+
 static int
 qed_update_vport(struct ecore_dev *edev, struct qed_update_vport_params *params)
 {
@@ -93,58 +120,6 @@ qed_update_vport(struct ecore_dev *edev, struct qed_update_vport_params *params)
 	sp_params.update_accept_any_vlan_flg =
 	    params->update_accept_any_vlan_flg;
 	sp_params.mtu = params->mtu;
-
-	/* RSS - is a bit tricky, since upper-layer isn't familiar with hwfns.
-	 * We need to re-fix the rss values per engine for CMT.
-	 */
-
-	if (edev->num_hwfns > 1 && params->update_rss_flg) {
-		struct qed_update_vport_rss_params *rss = &params->rss_params;
-		int k, max = 0;
-
-		/* Find largest entry, since it's possible RSS needs to
-		 * be disabled [in case only 1 queue per-hwfn]
-		 */
-		for (k = 0; k < ECORE_RSS_IND_TABLE_SIZE; k++)
-			max = (max > rss->rss_ind_table[k]) ?
-			    max : rss->rss_ind_table[k];
-
-		/* Either fix RSS values or disable RSS */
-		if (edev->num_hwfns < max + 1) {
-			int divisor = (max + edev->num_hwfns - 1) /
-			    edev->num_hwfns;
-
-			DP_VERBOSE(edev, ECORE_MSG_SPQ,
-				   "CMT - fixing RSS values (modulo %02x)\n",
-				   divisor);
-
-			for (k = 0; k < ECORE_RSS_IND_TABLE_SIZE; k++)
-				rss->rss_ind_table[k] =
-				    rss->rss_ind_table[k] % divisor;
-		} else {
-			DP_VERBOSE(edev, ECORE_MSG_SPQ,
-				   "CMT - 1 queue per-hwfn; Disabling RSS\n");
-			params->update_rss_flg = 0;
-		}
-	}
-
-	/* Now, update the RSS configuration for actual configuration */
-	if (params->update_rss_flg) {
-		sp_rss_params.update_rss_config = 1;
-		sp_rss_params.rss_enable = 1;
-		sp_rss_params.update_rss_capabilities = 1;
-		sp_rss_params.update_rss_ind_table = 1;
-		sp_rss_params.update_rss_key = 1;
-		sp_rss_params.rss_caps = ECORE_RSS_IPV4 | ECORE_RSS_IPV6 |
-		    ECORE_RSS_IPV4_TCP | ECORE_RSS_IPV6_TCP;
-		sp_rss_params.rss_table_size_log = 7;	/* 2^7 = 128 */
-		rte_memcpy(sp_rss_params.rss_ind_table,
-		       params->rss_params.rss_ind_table,
-		       ECORE_RSS_IND_TABLE_SIZE * sizeof(uint16_t));
-		rte_memcpy(sp_rss_params.rss_key, params->rss_params.rss_key,
-		       ECORE_RSS_KEY_SIZE * sizeof(uint32_t));
-		sp_params.rss_params = &sp_rss_params;
-	}
 
 	for_each_hwfn(edev, i) {
 		struct ecore_hwfn *p_hwfn = &edev->hwfns[i];
@@ -238,6 +213,7 @@ qed_start_txq(struct ecore_dev *edev,
 	p_hwfn = &edev->hwfns[hwfn_index];
 
 	p_params->queue_id = p_params->queue_id / edev->num_hwfns;
+	p_params->qzone_id = p_params->queue_id;
 	p_params->stats_id = p_params->vport_id;
 
 	rc = ecore_sp_eth_tx_queue_start(p_hwfn,
@@ -310,86 +286,11 @@ qed_get_vport_stats(struct ecore_dev *edev, struct ecore_eth_stats *stats)
 	ecore_get_vport_stats(edev, stats);
 }
 
-static int
-qed_configure_filter_ucast(struct ecore_dev *edev,
-			   struct qed_filter_ucast_params *params)
-{
-	struct ecore_filter_ucast ucast;
-
-	if (!params->vlan_valid && !params->mac_valid) {
-		DP_NOTICE(edev, true,
-			  "Tried configuring a unicast filter,"
-			  "but both MAC and VLAN are not set\n");
-		return -EINVAL;
-	}
-
-	memset(&ucast, 0, sizeof(ucast));
-	switch (params->type) {
-	case QED_FILTER_XCAST_TYPE_ADD:
-		ucast.opcode = ECORE_FILTER_ADD;
-		break;
-	case QED_FILTER_XCAST_TYPE_DEL:
-		ucast.opcode = ECORE_FILTER_REMOVE;
-		break;
-	case QED_FILTER_XCAST_TYPE_REPLACE:
-		ucast.opcode = ECORE_FILTER_REPLACE;
-		break;
-	default:
-		DP_NOTICE(edev, true, "Unknown unicast filter type %d\n",
-			  params->type);
-	}
-
-	if (params->vlan_valid && params->mac_valid) {
-		ucast.type = ECORE_FILTER_MAC_VLAN;
-		ether_addr_copy((struct ether_addr *)&params->mac,
-				(struct ether_addr *)&ucast.mac);
-		ucast.vlan = params->vlan;
-	} else if (params->mac_valid) {
-		ucast.type = ECORE_FILTER_MAC;
-		ether_addr_copy((struct ether_addr *)&params->mac,
-				(struct ether_addr *)&ucast.mac);
-	} else {
-		ucast.type = ECORE_FILTER_VLAN;
-		ucast.vlan = params->vlan;
-	}
-
-	ucast.is_rx_filter = true;
-	ucast.is_tx_filter = true;
-
-	return ecore_filter_ucast_cmd(edev, &ucast, ECORE_SPQ_MODE_CB, NULL);
-}
-
-static int
-qed_configure_filter_mcast(struct ecore_dev *edev,
-			   struct qed_filter_mcast_params *params)
-{
-	struct ecore_filter_mcast mcast;
-	int i;
-
-	memset(&mcast, 0, sizeof(mcast));
-	switch (params->type) {
-	case QED_FILTER_XCAST_TYPE_ADD:
-		mcast.opcode = ECORE_FILTER_ADD;
-		break;
-	case QED_FILTER_XCAST_TYPE_DEL:
-		mcast.opcode = ECORE_FILTER_REMOVE;
-		break;
-	default:
-		DP_NOTICE(edev, true, "Unknown multicast filter type %d\n",
-			  params->type);
-	}
-
-	mcast.num_mc_addrs = params->num;
-	for (i = 0; i < mcast.num_mc_addrs; i++)
-		ether_addr_copy((struct ether_addr *)&params->mac[i],
-				(struct ether_addr *)&mcast.mac[i]);
-
-	return ecore_filter_mcast_cmd(edev, &mcast, ECORE_SPQ_MODE_CB, NULL);
-}
-
-int qed_configure_filter_rx_mode(struct ecore_dev *edev,
+int qed_configure_filter_rx_mode(struct rte_eth_dev *eth_dev,
 				 enum qed_filter_rx_mode_type type)
 {
+	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
+	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
 	struct ecore_filter_accept_flags flags;
 
 	memset(&flags, 0, sizeof(flags));
@@ -422,25 +323,6 @@ int qed_configure_filter_rx_mode(struct ecore_dev *edev,
 				       ECORE_SPQ_MODE_CB, NULL);
 }
 
-static int
-qed_configure_filter(struct ecore_dev *edev, struct qed_filter_params *params)
-{
-	switch (params->type) {
-	case QED_FILTER_TYPE_UCAST:
-		return qed_configure_filter_ucast(edev, &params->filter.ucast);
-	case QED_FILTER_TYPE_MCAST:
-		return qed_configure_filter_mcast(edev, &params->filter.mcast);
-	case QED_FILTER_TYPE_RX_MODE:
-		return qed_configure_filter_rx_mode(edev,
-						    params->filter.
-						    accept_flags);
-	default:
-		DP_NOTICE(edev, true, "Unknown filter type %d\n",
-			  (int)params->type);
-		return -EINVAL;
-	}
-}
-
 static const struct qed_eth_ops qed_eth_ops_pass = {
 	INIT_STRUCT_FIELD(common, &qed_common_ops_pass),
 	INIT_STRUCT_FIELD(fill_dev_info, &qed_fill_eth_dev_info),
@@ -455,7 +337,6 @@ static const struct qed_eth_ops qed_eth_ops_pass = {
 	INIT_STRUCT_FIELD(fastpath_stop, &qed_fastpath_stop),
 	INIT_STRUCT_FIELD(fastpath_start, &qed_fastpath_start),
 	INIT_STRUCT_FIELD(get_vport_stats, &qed_get_vport_stats),
-	INIT_STRUCT_FIELD(filter_config, &qed_configure_filter),
 };
 
 const struct qed_eth_ops *qed_get_eth_ops(void)

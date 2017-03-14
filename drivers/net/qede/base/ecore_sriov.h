@@ -97,6 +97,7 @@ struct ecore_vf_info {
 	struct ecore_iov_vf_mbx vf_mbx;
 	enum vf_state state;
 	bool b_init;
+	bool b_malicious;
 	u8			to_disable;
 
 	struct ecore_bulletin	bulletin;
@@ -276,8 +277,8 @@ u32 ecore_crc32(u32 crc,
  *
  * @return 1 iff one of the PF's vfs got FLRed. 0 otherwise.
  */
-int ecore_iov_mark_vf_flr(struct ecore_hwfn *p_hwfn,
-			  u32 *disabled_vfs);
+bool ecore_iov_mark_vf_flr(struct ecore_hwfn *p_hwfn,
+			   u32 *disabled_vfs);
 
 /**
  * @brief Search extended TLVs in request/reply buffer.

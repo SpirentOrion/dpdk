@@ -63,21 +63,36 @@ static const char bnxt_version[] =
 #define BROADCOM_DEV_ID_57302 0x16c9
 #define BROADCOM_DEV_ID_57304_PF 0x16ca
 #define BROADCOM_DEV_ID_57304_VF 0x16cb
+#define BROADCOM_DEV_ID_57417_MF 0x16cc
 #define BROADCOM_DEV_ID_NS2 0x16cd
+#define BROADCOM_DEV_ID_57311 0x16ce
+#define BROADCOM_DEV_ID_57312 0x16cf
 #define BROADCOM_DEV_ID_57402 0x16d0
 #define BROADCOM_DEV_ID_57404 0x16d1
 #define BROADCOM_DEV_ID_57406_PF 0x16d2
 #define BROADCOM_DEV_ID_57406_VF 0x16d3
 #define BROADCOM_DEV_ID_57402_MF 0x16d4
 #define BROADCOM_DEV_ID_57407_RJ45 0x16d5
+#define BROADCOM_DEV_ID_57412 0x16d6
+#define BROADCOM_DEV_ID_57414 0x16d7
+#define BROADCOM_DEV_ID_57416_RJ45 0x16d8
+#define BROADCOM_DEV_ID_57417_RJ45 0x16d9
 #define BROADCOM_DEV_ID_5741X_VF 0x16dc
+#define BROADCOM_DEV_ID_57412_MF 0x16de
+#define BROADCOM_DEV_ID_57314 0x16df
+#define BROADCOM_DEV_ID_57317_RJ45 0x16e0
 #define BROADCOM_DEV_ID_5731X_VF 0x16e1
+#define BROADCOM_DEV_ID_57417_SFP 0x16e2
+#define BROADCOM_DEV_ID_57416_SFP 0x16e3
+#define BROADCOM_DEV_ID_57317_SFP 0x16e4
 #define BROADCOM_DEV_ID_57404_MF 0x16e7
 #define BROADCOM_DEV_ID_57406_MF 0x16e8
 #define BROADCOM_DEV_ID_57407_SFP 0x16e9
 #define BROADCOM_DEV_ID_57407_MF 0x16ea
+#define BROADCOM_DEV_ID_57414_MF 0x16ec
+#define BROADCOM_DEV_ID_57416_MF 0x16ee
 
-static struct rte_pci_id bnxt_pci_id_map[] = {
+static const struct rte_pci_id bnxt_pci_id_map[] = {
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57301) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57302) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57304_PF) },
@@ -95,6 +110,21 @@ static struct rte_pci_id bnxt_pci_id_map[] = {
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57407_MF) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_5741X_VF) },
 	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_5731X_VF) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57314) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57417_MF) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57311) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57312) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57412) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57414) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57416_RJ45) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57417_RJ45) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57412_MF) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57317_RJ45) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57417_SFP) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57416_SFP) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57317_SFP) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57414_MF) },
+	{ RTE_PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, BROADCOM_DEV_ID_57416_MF) },
 	{ .vendor_id = 0, /* sentinel */ },
 };
 
@@ -302,6 +332,8 @@ static void bnxt_dev_info_get_op(struct rte_eth_dev *eth_dev,
 {
 	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
 	uint16_t max_vnics, i, j, vpool, vrxq;
+
+	dev_info->pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
 
 	/* MAC Specifics */
 	dev_info->max_mac_addrs = MAX_NUM_MAC_ADDR;
@@ -743,6 +775,8 @@ static int bnxt_reta_query_op(struct rte_eth_dev *eth_dev,
 {
 	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
 	struct bnxt_vnic_info *vnic = &bp->vnic_info[0];
+	struct rte_intr_handle *intr_handle
+		= &bp->pdev->intr_handle;
 
 	/* Retrieve from the default VNIC */
 	if (!vnic)
@@ -759,7 +793,7 @@ static int bnxt_reta_query_op(struct rte_eth_dev *eth_dev,
 	/* EW - need to revisit here copying from u64 to u16 */
 	memcpy(reta_conf, vnic->rss_table, reta_size);
 
-	if (rte_intr_allow_others(&eth_dev->pci_dev->intr_handle)) {
+	if (rte_intr_allow_others(intr_handle)) {
 		if (eth_dev->data->dev_conf.intr_conf.lsc != 0)
 			bnxt_dev_lsc_intr_setup(eth_dev);
 	}
@@ -968,7 +1002,7 @@ static int bnxt_flow_ctrl_set_op(struct rte_eth_dev *dev,
  * Initialization
  */
 
-static struct eth_dev_ops bnxt_dev_ops = {
+static const struct eth_dev_ops bnxt_dev_ops = {
 	.dev_infos_get = bnxt_dev_info_get_op,
 	.dev_close = bnxt_dev_close_op,
 	.dev_configure = bnxt_dev_configure_op,
@@ -1009,11 +1043,12 @@ static bool bnxt_vf_pciid(uint16_t id)
 
 static int bnxt_init_board(struct rte_eth_dev *eth_dev)
 {
-	int rc;
 	struct bnxt *bp = eth_dev->data->dev_private;
+	struct rte_pci_device *pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
+	int rc;
 
 	/* enable device (incl. PCI PM wakeup), and bus-mastering */
-	if (!eth_dev->pci_dev->mem_resource[0].addr) {
+	if (!pci_dev->mem_resource[0].addr) {
 		RTE_LOG(ERR, PMD,
 			"Cannot find PCI device base address, aborting\n");
 		rc = -ENODEV;
@@ -1021,9 +1056,9 @@ static int bnxt_init_board(struct rte_eth_dev *eth_dev)
 	}
 
 	bp->eth_dev = eth_dev;
-	bp->pdev = eth_dev->pci_dev;
+	bp->pdev = pci_dev;
 
-	bp->bar0 = (void *)eth_dev->pci_dev->mem_resource[0].addr;
+	bp->bar0 = (void *)pci_dev->mem_resource[0].addr;
 	if (!bp->bar0) {
 		RTE_LOG(ERR, PMD, "Cannot map device registers, aborting\n");
 		rc = -ENOMEM;
@@ -1043,6 +1078,7 @@ init_err_disable:
 static int
 bnxt_dev_init(struct rte_eth_dev *eth_dev)
 {
+	struct rte_pci_device *pci_dev = RTE_DEV_TO_PCI(eth_dev->device);
 	static int version_printed;
 	struct bnxt *bp;
 	int rc;
@@ -1050,10 +1086,12 @@ bnxt_dev_init(struct rte_eth_dev *eth_dev)
 	if (version_printed++ == 0)
 		RTE_LOG(INFO, PMD, "%s", bnxt_version);
 
-	rte_eth_copy_pci_info(eth_dev, eth_dev->pci_dev);
+	rte_eth_copy_pci_info(eth_dev, pci_dev);
+	eth_dev->data->dev_flags |= RTE_ETH_DEV_DETACHABLE;
+
 	bp = eth_dev->data->dev_private;
 
-	if (bnxt_vf_pciid(eth_dev->pci_dev->id.device_id))
+	if (bnxt_vf_pciid(pci_dev->id.device_id))
 		bp->flags |= BNXT_FLAG_VF;
 
 	rc = bnxt_init_board(eth_dev);
@@ -1121,8 +1159,8 @@ bnxt_dev_init(struct rte_eth_dev *eth_dev)
 
 	RTE_LOG(INFO, PMD,
 		DRV_MODULE_NAME " found at mem %" PRIx64 ", node addr %pM\n",
-		eth_dev->pci_dev->mem_resource[0].phys_addr,
-		eth_dev->pci_dev->mem_resource[0].addr);
+		pci_dev->mem_resource[0].phys_addr,
+		pci_dev->mem_resource[0].addr);
 
 	bp->dev_stopped = 0;
 
@@ -1162,7 +1200,7 @@ static struct eth_driver bnxt_rte_pmd = {
 	.pci_drv = {
 		    .id_table = bnxt_pci_id_map,
 		    .drv_flags = RTE_PCI_DRV_NEED_MAPPING |
-			    RTE_PCI_DRV_DETACHABLE | RTE_PCI_DRV_INTR_LSC,
+			    RTE_PCI_DRV_INTR_LSC,
 		    .probe = rte_eth_dev_pci_probe,
 		    .remove = rte_eth_dev_pci_remove
 		    },
@@ -1173,3 +1211,4 @@ static struct eth_driver bnxt_rte_pmd = {
 
 RTE_PMD_REGISTER_PCI(net_bnxt, bnxt_rte_pmd.pci_drv);
 RTE_PMD_REGISTER_PCI_TABLE(net_bnxt, bnxt_pci_id_map);
+RTE_PMD_REGISTER_KMOD_DEP(net_bnxt, "* igb_uio | uio_pci_generic | vfio");

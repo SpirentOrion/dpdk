@@ -50,7 +50,9 @@ Network Interface Controller Drivers
     mlx5
     nfp
     qede
+    sfc_efx
     szedata2
+    tap
     thunderx
     virtio
     vhost

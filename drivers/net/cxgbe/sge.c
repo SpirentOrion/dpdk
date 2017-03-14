@@ -338,12 +338,12 @@ static inline void ring_fl_db(struct adapter *adap, struct sge_fl *q)
 		 * mechanism.
 		 */
 		if (unlikely(!q->bar2_addr)) {
-			t4_write_reg(adap, MYPF_REG(A_SGE_PF_KDOORBELL),
-				     val | V_QID(q->cntxt_id));
+			t4_write_reg_relaxed(adap, MYPF_REG(A_SGE_PF_KDOORBELL),
+					     val | V_QID(q->cntxt_id));
 		} else {
-			writel(val | V_QID(q->bar2_qid),
-			       (void *)((uintptr_t)q->bar2_addr +
-			       SGE_UDB_KDOORBELL));
+			writel_relaxed(val | V_QID(q->bar2_qid),
+				       (void *)((uintptr_t)q->bar2_addr +
+				       SGE_UDB_KDOORBELL));
 
 			/*
 			 * This Write memory Barrier will force the write to
@@ -890,14 +890,10 @@ static inline int should_tx_packet_coalesce(struct sge_eth_txq *txq,
 	struct sge_txq *q = &txq->q;
 	unsigned int flits, ndesc;
 	unsigned char type = 0;
-	int credits, hw_cidx = ntohs(q->stat->cidx);
-	int in_use = q->pidx - hw_cidx + flits_to_desc(q->coalesce.flits);
+	int credits;
 
 	/* use coal WR type 1 when no frags are present */
 	type = (mbuf->nb_segs == 1) ? 1 : 0;
-
-	if (in_use < 0)
-		in_use += q->size;
 
 	if (unlikely(type != q->coalesce.type && q->coalesce.idx))
 		ship_tx_pkt_coalesce_wr(adap, txq);

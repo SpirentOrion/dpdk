@@ -1,6 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2010-2015 Intel Corporation. All rights reserved.
+#   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
 #   All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
@@ -38,7 +38,7 @@ LIB = librte_pmd_i40e.a
 
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS) -DPF_DRIVER -DVF_DRIVER -DINTEGRATED_VF
-CFLAGS += -DX722_SUPPORT -DX722_A0_SUPPORT
+CFLAGS += -DX722_A0_SUPPORT
 
 EXPORT_MAP := rte_pmd_i40e_version.map
 
@@ -105,17 +105,21 @@ endif
 SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_ethdev_vf.c
 SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_pf.c
 SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_fdir.c
+SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_flow.c
 
 # vector PMD driver needs SSE4.1 support
 ifeq ($(findstring RTE_MACHINE_CPUFLAG_SSE4_1,$(CFLAGS)),)
 CFLAGS_i40e_rxtx_vec_sse.o += -msse4.1
 endif
 
+# install this header file
+SYMLINK-$(CONFIG_RTE_LIBRTE_I40E_PMD)-include := rte_pmd_i40e.h
 
 # this lib depends upon:
 DEPDIRS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += lib/librte_eal lib/librte_ether
 DEPDIRS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += lib/librte_mempool lib/librte_mbuf
 DEPDIRS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += lib/librte_net
 DEPDIRS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += lib/librte_kvargs
+DEPDIRS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += lib/librte_hash
 
 include $(RTE_SDK)/mk/rte.lib.mk

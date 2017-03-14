@@ -70,28 +70,26 @@ static u32 ecore_hw_bar_size(struct ecore_hwfn *p_hwfn, enum BAR_ID bar_id)
 	}
 
 	val = ecore_rd(p_hwfn, p_hwfn->p_main_ptt, bar_reg);
+	if (val)
+		return 1 << (val + 15);
 
 	/* The above registers were updated in the past only in CMT mode. Since
 	 * they were found to be useful MFW started updating them from 8.7.7.0.
 	 * In older MFW versions they are set to 0 which means disabled.
 	 */
-	if (!val) {
-		if (p_hwfn->p_dev->num_hwfns > 1) {
-			DP_NOTICE(p_hwfn, false,
-				  "BAR size not configured. Assuming BAR size");
-			DP_NOTICE(p_hwfn, false,
-				  "of 256kB for GRC and 512kB for DB\n");
-			return BAR_ID_0 ? 256 * 1024 : 512 * 1024;
-		} else {
-			DP_NOTICE(p_hwfn, false,
-				  "BAR size not configured. Assuming BAR size");
-			DP_NOTICE(p_hwfn, false,
-				  "of 512kB for GRC and 512kB for DB\n");
-			return 512 * 1024;
-		}
+	if (p_hwfn->p_dev->num_hwfns > 1) {
+		DP_NOTICE(p_hwfn, false,
+			  "BAR size not configured. Assuming BAR size of 256kB"
+			  " for GRC and 512kB for DB\n");
+		val = BAR_ID_0 ? 256 * 1024 : 512 * 1024;
+	} else {
+		DP_NOTICE(p_hwfn, false,
+			  "BAR size not configured. Assuming BAR size of 512kB"
+			  " for GRC and 512kB for DB\n");
+		val = 512 * 1024;
 	}
 
-	return 1 << (val + 15);
+	return val;
 }
 
 void ecore_init_dp(struct ecore_dev *p_dev,
@@ -542,11 +540,14 @@ enum _ecore_status_t ecore_resc_alloc(struct ecore_dev *p_dev)
 	/* Allocate Memory for the Queue->CID mapping */
 	for_each_hwfn(p_dev, i) {
 		struct ecore_hwfn *p_hwfn = &p_dev->hwfns[i];
+		u32 num_tx_conns = RESC_NUM(p_hwfn, ECORE_L2_QUEUE);
+		int tx_size, rx_size;
 
 		/* @@@TMP - resc management, change to actual required size */
-		int tx_size = sizeof(struct ecore_hw_cid_data) *
-		    RESC_NUM(p_hwfn, ECORE_L2_QUEUE);
-		int rx_size = sizeof(struct ecore_hw_cid_data) *
+		if (p_hwfn->pf_params.eth_pf_params.num_cons > num_tx_conns)
+			num_tx_conns = p_hwfn->pf_params.eth_pf_params.num_cons;
+		tx_size = sizeof(struct ecore_hw_cid_data) * num_tx_conns;
+		rx_size = sizeof(struct ecore_hw_cid_data) *
 		    RESC_NUM(p_hwfn, ECORE_L2_QUEUE);
 
 		p_hwfn->p_tx_cids = OSAL_ZALLOC(p_hwfn->p_dev, GFP_KERNEL,
@@ -667,6 +668,7 @@ enum _ecore_status_t ecore_resc_alloc(struct ecore_dev *p_dev)
 			DP_ERR(p_hwfn, "Cannot allocate 0x%x EQ elements."
 				       "The maximum of a u16 chain is 0x%x\n",
 			       n_eqes, 0xFFFF);
+			rc = ECORE_INVAL;
 			goto alloc_err;
 		}
 
@@ -707,7 +709,7 @@ enum _ecore_status_t ecore_resc_alloc(struct ecore_dev *p_dev)
 	}
 
 	p_dev->reset_stats = OSAL_ZALLOC(p_dev, GFP_KERNEL,
-					 sizeof(struct ecore_eth_stats));
+					 sizeof(*p_dev->reset_stats));
 	if (!p_dev->reset_stats) {
 		DP_NOTICE(p_dev, true, "Failed to allocate reset statistics\n");
 		goto alloc_no_mem;
@@ -819,9 +821,7 @@ static enum _ecore_status_t ecore_calc_hw_mode(struct ecore_hwfn *p_hwfn)
 {
 	int hw_mode = 0;
 
-	if (ECORE_IS_BB_A0(p_hwfn->p_dev)) {
-		hw_mode |= 1 << MODE_BB_A0;
-	} else if (ECORE_IS_BB_B0(p_hwfn->p_dev)) {
+	if (ECORE_IS_BB_B0(p_hwfn->p_dev)) {
 		hw_mode |= 1 << MODE_BB_B0;
 	} else if (ECORE_IS_AH(p_hwfn->p_dev)) {
 		hw_mode |= 1 << MODE_K2;
@@ -876,11 +876,6 @@ static enum _ecore_status_t ecore_calc_hw_mode(struct ecore_hwfn *p_hwfn)
 	} else
 #endif
 		hw_mode |= 1 << MODE_ASIC;
-
-#ifndef REAL_ASIC_ONLY
-	if (ENABLE_EAGLE_ENG1_WORKAROUND(p_hwfn))
-		hw_mode |= 1 << MODE_EAGLE_ENG1_WORKAROUND;
-#endif
 
 	if (p_hwfn->p_dev->num_hwfns > 1)
 		hw_mode |= 1 << MODE_100G;
@@ -987,7 +982,7 @@ static enum _ecore_status_t ecore_hw_init_common(struct ecore_hwfn *p_hwfn,
 	ecore_gtt_init(p_hwfn);
 
 #ifndef ASIC_ONLY
-	if (CHIP_REV_IS_EMUL(p_hwfn->p_dev)) {
+	if (CHIP_REV_IS_EMUL(p_dev)) {
 		rc = ecore_hw_init_chip(p_hwfn, p_hwfn->p_main_ptt);
 		if (rc != ECORE_SUCCESS)
 			return rc;
@@ -1002,7 +997,7 @@ static enum _ecore_status_t ecore_hw_init_common(struct ecore_hwfn *p_hwfn,
 	}
 
 	ecore_qm_common_rt_init(p_hwfn,
-				p_hwfn->p_dev->num_ports_in_engines,
+				p_dev->num_ports_in_engines,
 				qm_info->max_phys_tcs_per_port,
 				qm_info->pf_rl_en, qm_info->pf_wfq_en,
 				qm_info->vport_rl_en, qm_info->vport_wfq_en,
@@ -1032,11 +1027,11 @@ static enum _ecore_status_t ecore_hw_init_common(struct ecore_hwfn *p_hwfn,
 	ecore_wr(p_hwfn, p_ptt, PSWRQ2_REG_L2P_VALIDATE_VFID, 0);
 	ecore_wr(p_hwfn, p_ptt, PGLUE_B_REG_USE_CLIENTID_IN_TAG, 1);
 
-	if (ECORE_IS_BB(p_hwfn->p_dev)) {
+	if (ECORE_IS_BB(p_dev)) {
 		/* Workaround clears ROCE search for all functions to prevent
 		 * involving non initialized function in processing ROCE packet.
 		 */
-		num_pfs = NUM_OF_ENG_PFS(p_hwfn->p_dev);
+		num_pfs = NUM_OF_ENG_PFS(p_dev);
 		for (pf_id = 0; pf_id < num_pfs; pf_id++) {
 			ecore_fid_pretend(p_hwfn, p_ptt, pf_id);
 			ecore_wr(p_hwfn, p_ptt, PRS_REG_SEARCH_ROCE, 0x0);
@@ -1052,8 +1047,7 @@ static enum _ecore_status_t ecore_hw_init_common(struct ecore_hwfn *p_hwfn,
 	 * This is not done inside the init tool since it currently can't
 	 * perform a pretending to VFs.
 	 */
-	max_num_vfs = ECORE_IS_AH(p_hwfn->p_dev) ? MAX_NUM_VFS_K2
-	    : MAX_NUM_VFS_BB;
+	max_num_vfs = ECORE_IS_AH(p_dev) ? MAX_NUM_VFS_K2 : MAX_NUM_VFS_BB;
 	for (vf_id = 0; vf_id < max_num_vfs; vf_id++) {
 		concrete_fid = ecore_vfid_to_concrete(p_hwfn, vf_id);
 		ecore_fid_pretend(p_hwfn, p_ptt, (u16)concrete_fid);
@@ -1532,7 +1526,9 @@ ecore_hw_init_pf(struct ecore_hwfn *p_hwfn,
 		return rc;
 	if (b_hw_start) {
 		/* enable interrupts */
-		ecore_int_igu_enable(p_hwfn, p_ptt, int_mode);
+		rc = ecore_int_igu_enable(p_hwfn, p_ptt, int_mode);
+		if (rc != ECORE_SUCCESS)
+			return rc;
 
 		/* send function start command */
 		rc = ecore_sp_pf_start(p_hwfn, p_tunn, p_hwfn->p_dev->mf_mode,
@@ -1623,9 +1619,10 @@ enum _ecore_status_t ecore_hw_init(struct ecore_dev *p_dev,
 {
 	enum _ecore_status_t rc, mfw_rc;
 	u32 load_code, param;
-	int i, j;
+	int i;
 
-	if (p_params->int_mode == ECORE_INT_MODE_MSI && p_dev->num_hwfns > 1) {
+	if ((p_params->int_mode == ECORE_INT_MODE_MSI) &&
+	    (p_dev->num_hwfns > 1)) {
 		DP_NOTICE(p_dev, false,
 			  "MSI mode is not supported for CMT devices\n");
 		return ECORE_INVAL;
@@ -1707,25 +1704,6 @@ enum _ecore_status_t ecore_hw_init(struct ecore_dev *p_dev,
 						p_hwfn->hw_info.hw_mode);
 			if (rc)
 				break;
-
-#ifndef REAL_ASIC_ONLY
-			if (ENABLE_EAGLE_ENG1_WORKAROUND(p_hwfn)) {
-				struct init_nig_pri_tc_map_req tc_map;
-
-				OSAL_MEM_ZERO(&tc_map, sizeof(tc_map));
-
-				/* remove this once flow control is
-				 * implemented
-				 */
-				for (j = 0; j < NUM_OF_VLAN_PRIORITIES; j++) {
-					tc_map.pri[j].tc_id = 0;
-					tc_map.pri[j].valid = 1;
-				}
-				ecore_init_nig_pri_tc_map(p_hwfn,
-							  p_hwfn->p_main_ptt,
-							  &tc_map);
-			}
-#endif
 			/* Fall into */
 		case FW_MSG_CODE_DRV_LOAD_FUNCTION:
 			rc = ecore_hw_init_pf(p_hwfn, p_hwfn->p_main_ptt,
@@ -1756,10 +1734,6 @@ enum _ecore_status_t ecore_hw_init(struct ecore_dev *p_dev,
 				  "Failed sending LOAD_DONE command\n");
 			return mfw_rc;
 		}
-
-		ecore_mcp_mdump_get_info(p_hwfn, p_hwfn->p_main_ptt);
-		ecore_mcp_mdump_set_values(p_hwfn, p_hwfn->p_main_ptt,
-					   p_params->epoch);
 
 		/* send DCBX attention request command */
 		DP_VERBOSE(p_hwfn, ECORE_MSG_DCB,
@@ -1802,13 +1776,14 @@ static void ecore_hw_timers_stop(struct ecore_dev *p_dev,
 		 */
 		OSAL_MSLEEP(1);
 	}
-	if (i == ECORE_HW_STOP_RETRY_LIMIT)
-		DP_NOTICE(p_hwfn, true,
-			  "Timers linear scans are not over [Connection %02x Tasks %02x]\n",
-			  (u8)ecore_rd(p_hwfn, p_ptt,
-					TM_REG_PF_SCAN_ACTIVE_CONN),
-			  (u8)ecore_rd(p_hwfn, p_ptt,
-					TM_REG_PF_SCAN_ACTIVE_TASK));
+
+	if (i < ECORE_HW_STOP_RETRY_LIMIT)
+		return;
+
+	DP_NOTICE(p_hwfn, true, "Timers linear scans are not over"
+		  " [Connection %02x Tasks %02x]\n",
+		  (u8)ecore_rd(p_hwfn, p_ptt, TM_REG_PF_SCAN_ACTIVE_CONN),
+		  (u8)ecore_rd(p_hwfn, p_ptt, TM_REG_PF_SCAN_ACTIVE_TASK));
 }
 
 void ecore_hw_timers_stop_all(struct ecore_dev *p_dev)
@@ -2218,100 +2193,6 @@ static u32 ecore_hw_get_dflt_resc_num(struct ecore_hwfn *p_hwfn,
 	return dflt_resc_num;
 }
 
-static enum _ecore_status_t ecore_hw_set_resc_info(struct ecore_hwfn *p_hwfn,
-						   enum ecore_resources res_id,
-						   bool drv_resc_alloc)
-{
-	u32 dflt_resc_num = 0, dflt_resc_start = 0, mcp_resp, mcp_param;
-	u32 *p_resc_num, *p_resc_start;
-	struct resource_info resc_info;
-	enum _ecore_status_t rc;
-
-	p_resc_num = &RESC_NUM(p_hwfn, res_id);
-	p_resc_start = &RESC_START(p_hwfn, res_id);
-
-	dflt_resc_num = ecore_hw_get_dflt_resc_num(p_hwfn, res_id);
-	if (!dflt_resc_num) {
-		DP_ERR(p_hwfn, "Failed to get default amount for resource %d\n",
-		       res_id);
-		return ECORE_INVAL;
-	}
-	dflt_resc_start = dflt_resc_num * p_hwfn->enabled_func_idx;
-
-#ifndef ASIC_ONLY
-	if (CHIP_REV_IS_SLOW(p_hwfn->p_dev)) {
-		*p_resc_num = dflt_resc_num;
-		*p_resc_start = dflt_resc_start;
-		goto out;
-	}
-#endif
-
-	OSAL_MEM_ZERO(&resc_info, sizeof(resc_info));
-	resc_info.res_id = ecore_hw_get_mfw_res_id(res_id);
-	if (resc_info.res_id == RESOURCE_NUM_INVALID) {
-		DP_ERR(p_hwfn,
-		       "Failed to match resource %d with MFW resources\n",
-		       res_id);
-		return ECORE_INVAL;
-	}
-
-	rc = ecore_mcp_get_resc_info(p_hwfn, p_hwfn->p_main_ptt, &resc_info,
-				     &mcp_resp, &mcp_param);
-	if (rc != ECORE_SUCCESS) {
-		DP_NOTICE(p_hwfn, true,
-			  "MFW resp failure for a resc alloc req [res_id %d]\n",
-			  res_id);
-		return rc;
-	}
-
-	/* Default driver values are applied in the following cases:
-	 * - The resource allocation MB command is not supported by the MFW
-	 * - There is an internal error in the MFW while processing the request
-	 * - The resource ID is unknown to the MFW
-	 */
-	if (mcp_resp != FW_MSG_CODE_RESOURCE_ALLOC_OK &&
-	    mcp_resp != FW_MSG_CODE_RESOURCE_ALLOC_DEPRECATED) {
-		/* @DPDK */
-		DP_INFO(p_hwfn,
-			  "No allocation info for resc %d [mcp_resp 0x%x].",
-			  res_id, mcp_resp);
-		DP_INFO(p_hwfn,
-			  "Applying default values [num %d, start %d].\n",
-			  dflt_resc_num, dflt_resc_start);
-
-		*p_resc_num = dflt_resc_num;
-		*p_resc_start = dflt_resc_start;
-		goto out;
-	}
-
-	/* TBD - remove this when revising the handling of the SB resource */
-	if (res_id == ECORE_SB) {
-		/* Excluding the slowpath SB */
-		resc_info.size -= 1;
-		resc_info.offset -= p_hwfn->enabled_func_idx;
-	}
-
-	*p_resc_num = resc_info.size;
-	*p_resc_start = resc_info.offset;
-
-	if (*p_resc_num != dflt_resc_num || *p_resc_start != dflt_resc_start) {
-		DP_NOTICE(p_hwfn, false,
-			  "Resource %d: MFW allocation [num %d, start %d]",
-			  res_id, *p_resc_num, *p_resc_start);
-		DP_NOTICE(p_hwfn, false,
-			  "differs from default values [num %d, start %d]%s\n",
-			  dflt_resc_num,
-			  dflt_resc_start,
-			  drv_resc_alloc ? " - applying default values" : "");
-		if (drv_resc_alloc) {
-			*p_resc_num = dflt_resc_num;
-			*p_resc_start = dflt_resc_start;
-		}
-	}
- out:
-	return ECORE_SUCCESS;
-}
-
 static const char *ecore_hw_get_resc_name(enum ecore_resources res_id)
 {
 	switch (res_id) {
@@ -2346,6 +2227,100 @@ static const char *ecore_hw_get_resc_name(enum ecore_resources res_id)
 	}
 }
 
+static enum _ecore_status_t ecore_hw_set_resc_info(struct ecore_hwfn *p_hwfn,
+						   enum ecore_resources res_id,
+						   bool drv_resc_alloc)
+{
+	u32 dflt_resc_num = 0, dflt_resc_start = 0, mcp_resp, mcp_param;
+	u32 *p_resc_num, *p_resc_start;
+	struct resource_info resc_info;
+	enum _ecore_status_t rc;
+
+	p_resc_num = &RESC_NUM(p_hwfn, res_id);
+	p_resc_start = &RESC_START(p_hwfn, res_id);
+
+	dflt_resc_num = ecore_hw_get_dflt_resc_num(p_hwfn, res_id);
+	if (!dflt_resc_num) {
+		DP_ERR(p_hwfn,
+		       "Failed to get default amount for resource %d [%s]\n",
+			res_id, ecore_hw_get_resc_name(res_id));
+		return ECORE_INVAL;
+	}
+	dflt_resc_start = dflt_resc_num * p_hwfn->enabled_func_idx;
+
+#ifndef ASIC_ONLY
+	if (CHIP_REV_IS_SLOW(p_hwfn->p_dev)) {
+		*p_resc_num = dflt_resc_num;
+		*p_resc_start = dflt_resc_start;
+		goto out;
+	}
+#endif
+
+	OSAL_MEM_ZERO(&resc_info, sizeof(resc_info));
+	resc_info.res_id = ecore_hw_get_mfw_res_id(res_id);
+	if (resc_info.res_id == RESOURCE_NUM_INVALID) {
+		DP_ERR(p_hwfn,
+		       "Failed to match resource %d with MFW resources\n",
+		       res_id);
+		return ECORE_INVAL;
+	}
+
+	rc = ecore_mcp_get_resc_info(p_hwfn, p_hwfn->p_main_ptt, &resc_info,
+				     &mcp_resp, &mcp_param);
+	if (rc != ECORE_SUCCESS) {
+		DP_NOTICE(p_hwfn, true,
+			  "MFW response failure for an allocation request for"
+			  " resource %d [%s]\n",
+			  res_id, ecore_hw_get_resc_name(res_id));
+		return rc;
+	}
+
+	/* Default driver values are applied in the following cases:
+	 * - The resource allocation MB command is not supported by the MFW
+	 * - There is an internal error in the MFW while processing the request
+	 * - The resource ID is unknown to the MFW
+	 */
+	if (mcp_resp != FW_MSG_CODE_RESOURCE_ALLOC_OK &&
+	    mcp_resp != FW_MSG_CODE_RESOURCE_ALLOC_DEPRECATED) {
+		/* @DPDK */
+		DP_INFO(p_hwfn,
+			"Resource %d [%s]: No allocation info was received"
+			" [mcp_resp 0x%x]. Applying default values"
+			" [num %d, start %d].\n",
+			res_id, ecore_hw_get_resc_name(res_id), mcp_resp,
+			dflt_resc_num, dflt_resc_start);
+
+		*p_resc_num = dflt_resc_num;
+		*p_resc_start = dflt_resc_start;
+		goto out;
+	}
+
+	/* TBD - remove this when revising the handling of the SB resource */
+	if (res_id == ECORE_SB) {
+		/* Excluding the slowpath SB */
+		resc_info.size -= 1;
+		resc_info.offset -= p_hwfn->enabled_func_idx;
+	}
+
+	*p_resc_num = resc_info.size;
+	*p_resc_start = resc_info.offset;
+
+	if (*p_resc_num != dflt_resc_num || *p_resc_start != dflt_resc_start) {
+		DP_NOTICE(p_hwfn, false,
+			  "Resource %d [%s]: MFW allocation [num %d, start %d]"
+			  " differs from default values [num %d, start %d]%s\n",
+			  res_id, ecore_hw_get_resc_name(res_id), *p_resc_num,
+			  *p_resc_start, dflt_resc_num, dflt_resc_start,
+			  drv_resc_alloc ? " - Applying default values" : "");
+		if (drv_resc_alloc) {
+			*p_resc_num = dflt_resc_num;
+			*p_resc_start = dflt_resc_start;
+		}
+	}
+ out:
+	return ECORE_SUCCESS;
+}
+
 static enum _ecore_status_t ecore_hw_get_resc(struct ecore_hwfn *p_hwfn,
 					      bool drv_resc_alloc)
 {
@@ -2365,7 +2340,12 @@ static enum _ecore_status_t ecore_hw_get_resc(struct ecore_hwfn *p_hwfn,
 #endif
 
 	for (res_id = 0; res_id < ECORE_MAX_RESC; res_id++) {
-		rc = ecore_hw_set_resc_info(p_hwfn, res_id, drv_resc_alloc);
+		/* @@@TMP for AH:
+		 * Force the driver's default resource allocation in case there
+		 * is a diff with the MFW allocation value.
+		 */
+		rc = ecore_hw_set_resc_info(p_hwfn, res_id,
+					    b_ah || drv_resc_alloc);
 		if (rc != ECORE_SUCCESS)
 			return rc;
 	}
@@ -2425,7 +2405,7 @@ static enum _ecore_status_t ecore_hw_get_resc(struct ecore_hwfn *p_hwfn,
 static enum _ecore_status_t ecore_hw_get_nvm_info(struct ecore_hwfn *p_hwfn,
 						  struct ecore_ptt *p_ptt)
 {
-	u32 nvm_cfg1_offset, mf_mode, addr, generic_cont0, core_cfg;
+	u32 nvm_cfg1_offset, mf_mode, addr, generic_cont0, core_cfg, dcbx_mode;
 	u32 port_cfg_addr, link_temp, nvm_cfg_addr, device_capabilities;
 	struct ecore_mcp_link_params *link;
 
@@ -2474,6 +2454,9 @@ static enum _ecore_status_t ecore_hw_get_nvm_info(struct ecore_hwfn *p_hwfn,
 	case NVM_CFG1_GLOB_NETWORK_PORT_MODE_2X25G:
 		p_hwfn->hw_info.port_mode = ECORE_PORT_MODE_DE_2X25G;
 		break;
+	case NVM_CFG1_GLOB_NETWORK_PORT_MODE_2X10G:
+		p_hwfn->hw_info.port_mode = ECORE_PORT_MODE_DE_2X10G;
+		break;
 	case NVM_CFG1_GLOB_NETWORK_PORT_MODE_1X25G:
 		p_hwfn->hw_info.port_mode = ECORE_PORT_MODE_DE_1X25G;
 		break;
@@ -2484,6 +2467,28 @@ static enum _ecore_status_t ecore_hw_get_nvm_info(struct ecore_hwfn *p_hwfn,
 		DP_NOTICE(p_hwfn, true, "Unknown port mode in 0x%08x\n",
 			  core_cfg);
 		break;
+	}
+
+	/* Read DCBX configuration */
+	port_cfg_addr = MCP_REG_SCRATCH + nvm_cfg1_offset +
+			OFFSETOF(struct nvm_cfg1, port[MFW_PORT(p_hwfn)]);
+	dcbx_mode = ecore_rd(p_hwfn, p_ptt,
+			     port_cfg_addr +
+			     OFFSETOF(struct nvm_cfg1_port, generic_cont0));
+	dcbx_mode = (dcbx_mode & NVM_CFG1_PORT_DCBX_MODE_MASK)
+		>> NVM_CFG1_PORT_DCBX_MODE_OFFSET;
+	switch (dcbx_mode) {
+	case NVM_CFG1_PORT_DCBX_MODE_DYNAMIC:
+		p_hwfn->hw_info.dcbx_mode = ECORE_DCBX_VERSION_DYNAMIC;
+		break;
+	case NVM_CFG1_PORT_DCBX_MODE_CEE:
+		p_hwfn->hw_info.dcbx_mode = ECORE_DCBX_VERSION_CEE;
+		break;
+	case NVM_CFG1_PORT_DCBX_MODE_IEEE:
+		p_hwfn->hw_info.dcbx_mode = ECORE_DCBX_VERSION_IEEE;
+		break;
+	default:
+		p_hwfn->hw_info.dcbx_mode = ECORE_DCBX_VERSION_DISABLED;
 	}
 
 	/* Read default link configuration */
@@ -2751,7 +2756,7 @@ ecore_get_hw_info(struct ecore_hwfn *p_hwfn, struct ecore_ptt *p_ptt,
 	/* Since all information is common, only first hwfns should do this */
 	if (IS_LEAD_HWFN(p_hwfn)) {
 		rc = ecore_iov_hw_info(p_hwfn);
-		if (rc)
+		if (rc != ECORE_SUCCESS)
 			return rc;
 	}
 
@@ -2765,12 +2770,17 @@ ecore_get_hw_info(struct ecore_hwfn *p_hwfn, struct ecore_ptt *p_ptt,
 	ecore_hw_info_port_num(p_hwfn, p_ptt);
 
 #ifndef ASIC_ONLY
-	if (CHIP_REV_IS_ASIC(p_hwfn->p_dev))
+	if (CHIP_REV_IS_ASIC(p_hwfn->p_dev)) {
 #endif
-		ecore_hw_get_nvm_info(p_hwfn, p_ptt);
+	rc = ecore_hw_get_nvm_info(p_hwfn, p_ptt);
+	if (rc != ECORE_SUCCESS)
+		return rc;
+#ifndef ASIC_ONLY
+	}
+#endif
 
 	rc = ecore_int_igu_read_cam(p_hwfn, p_ptt);
-	if (rc)
+	if (rc != ECORE_SUCCESS)
 		return rc;
 
 #ifndef ASIC_ONLY
@@ -2795,11 +2805,14 @@ ecore_get_hw_info(struct ecore_hwfn *p_hwfn, struct ecore_ptt *p_ptt,
 		ecore_mcp_cmd_port_init(p_hwfn, p_ptt);
 	}
 
-	if (personality != ECORE_PCI_DEFAULT)
+	if (personality != ECORE_PCI_DEFAULT) {
 		p_hwfn->hw_info.personality = personality;
-	else if (ecore_mcp_is_init(p_hwfn))
-		p_hwfn->hw_info.personality =
-		    p_hwfn->mcp_info->func_info.protocol;
+	} else if (ecore_mcp_is_init(p_hwfn)) {
+		enum ecore_pci_personality protocol;
+
+		protocol = p_hwfn->mcp_info->func_info.protocol;
+		p_hwfn->hw_info.personality = protocol;
+	}
 
 #ifndef ASIC_ONLY
 	/* To overcome ILT lack for emulation, until at least until we'll have
@@ -2948,11 +2961,13 @@ void ecore_prepare_hibernate(struct ecore_dev *p_dev)
 #endif
 
 static enum _ecore_status_t
-ecore_hw_prepare_single(struct ecore_hwfn *p_hwfn, void OSAL_IOMEM *p_regview,
-			void OSAL_IOMEM *p_doorbells,
+ecore_hw_prepare_single(struct ecore_hwfn *p_hwfn,
+			void OSAL_IOMEM * p_regview,
+			void OSAL_IOMEM * p_doorbells,
 			struct ecore_hw_prepare_params *p_params)
 {
 	struct ecore_dev *p_dev = p_hwfn->p_dev;
+	struct ecore_mdump_info mdump_info;
 	enum _ecore_status_t rc = ECORE_SUCCESS;
 
 	/* Split PCI bars evenly between hwfns */
@@ -2997,18 +3012,35 @@ ecore_hw_prepare_single(struct ecore_hwfn *p_hwfn, void OSAL_IOMEM *p_regview,
 		goto err1;
 	}
 
-	if (p_hwfn == ECORE_LEADING_HWFN(p_dev) && !p_dev->recov_in_prog) {
-		rc = ecore_mcp_initiate_pf_flr(p_hwfn, p_hwfn->p_main_ptt);
-		if (rc != ECORE_SUCCESS)
-			DP_NOTICE(p_hwfn, false, "Failed to initiate PF FLR\n");
-	}
-
 	/* Read the device configuration information from the HW and SHMEM */
 	rc = ecore_get_hw_info(p_hwfn, p_hwfn->p_main_ptt,
 			       p_params->personality, p_params->drv_resc_alloc);
 	if (rc) {
 		DP_NOTICE(p_hwfn, true, "Failed to get HW information\n");
 		goto err2;
+	}
+
+	/* Sending a mailbox to the MFW should be after ecore_get_hw_info() is
+	 * called, since among others it sets the ports number in an engine.
+	 */
+	if (p_params->initiate_pf_flr && p_hwfn == ECORE_LEADING_HWFN(p_dev) &&
+	    !p_dev->recov_in_prog) {
+		rc = ecore_mcp_initiate_pf_flr(p_hwfn, p_hwfn->p_main_ptt);
+		if (rc != ECORE_SUCCESS)
+			DP_NOTICE(p_hwfn, false, "Failed to initiate PF FLR\n");
+	}
+
+	/* Check if mdump logs are present and update the epoch value */
+	if (p_hwfn == ECORE_LEADING_HWFN(p_hwfn->p_dev)) {
+		rc = ecore_mcp_mdump_get_info(p_hwfn, p_hwfn->p_main_ptt,
+					      &mdump_info);
+		if (rc == ECORE_SUCCESS && mdump_info.num_of_logs > 0) {
+			DP_NOTICE(p_hwfn, false,
+				  "* * * IMPORTANT - HW ERROR register dump captured by device * * *\n");
+		}
+
+		ecore_mcp_mdump_set_values(p_hwfn, p_hwfn->p_main_ptt,
+					   p_params->epoch);
 	}
 
 	/* Allocate the init RT array and initialize the init-ops engine */
@@ -3096,7 +3128,7 @@ enum _ecore_status_t ecore_hw_prepare(struct ecore_dev *p_dev,
 		}
 	}
 
-	return ECORE_SUCCESS;
+	return rc;
 }
 
 void ecore_hw_remove(struct ecore_dev *p_dev)
@@ -3185,8 +3217,10 @@ static void ecore_chain_free_pbl(struct ecore_dev *p_dev,
 	}
 
 	pbl_size = page_cnt * ECORE_CHAIN_PBL_ENTRY_SIZE;
-	OSAL_DMA_FREE_COHERENT(p_dev, p_chain->pbl.p_virt_table,
-			       p_chain->pbl.p_phys_table, pbl_size);
+
+	if (!p_chain->pbl.external)
+		OSAL_DMA_FREE_COHERENT(p_dev, p_chain->pbl.p_virt_table,
+				       p_chain->pbl.p_phys_table, pbl_size);
  out:
 	OSAL_VFREE(p_dev, p_chain->pbl.pp_virt_addr_tbl);
 }
@@ -3271,8 +3305,8 @@ ecore_chain_alloc_next_ptr(struct ecore_dev *p_dev, struct ecore_chain *p_chain)
 static enum _ecore_status_t
 ecore_chain_alloc_single(struct ecore_dev *p_dev, struct ecore_chain *p_chain)
 {
-	void *p_virt = OSAL_NULL;
 	dma_addr_t p_phys = 0;
+	void *p_virt = OSAL_NULL;
 
 	p_virt = OSAL_DMA_ALLOC_COHERENT(p_dev, &p_phys, ECORE_CHAIN_PAGE_SIZE);
 	if (!p_virt) {
@@ -3286,8 +3320,10 @@ ecore_chain_alloc_single(struct ecore_dev *p_dev, struct ecore_chain *p_chain)
 	return ECORE_SUCCESS;
 }
 
-static enum _ecore_status_t ecore_chain_alloc_pbl(struct ecore_dev *p_dev,
-						  struct ecore_chain *p_chain)
+static enum _ecore_status_t
+ecore_chain_alloc_pbl(struct ecore_dev *p_dev,
+		      struct ecore_chain *p_chain,
+		      struct ecore_chain_ext_pbl *ext_pbl)
 {
 	void *p_virt = OSAL_NULL;
 	u8 *p_pbl_virt = OSAL_NULL;
@@ -3311,7 +3347,15 @@ static enum _ecore_status_t ecore_chain_alloc_pbl(struct ecore_dev *p_dev,
 	 * should be saved to allow its freeing during the error flow.
 	 */
 	size = page_cnt * ECORE_CHAIN_PBL_ENTRY_SIZE;
-	p_pbl_virt = OSAL_DMA_ALLOC_COHERENT(p_dev, &p_pbl_phys, size);
+
+	if (ext_pbl == OSAL_NULL) {
+		p_pbl_virt = OSAL_DMA_ALLOC_COHERENT(p_dev, &p_pbl_phys, size);
+	} else {
+		p_pbl_virt = ext_pbl->p_pbl_virt;
+		p_pbl_phys = ext_pbl->p_pbl_phys;
+		p_chain->pbl.external = true;
+	}
+
 	ecore_chain_init_pbl_mem(p_chain, p_pbl_virt, p_pbl_phys,
 				 pp_virt_addr_tbl);
 	if (!p_pbl_virt) {
@@ -3349,7 +3393,8 @@ enum _ecore_status_t ecore_chain_alloc(struct ecore_dev *p_dev,
 				       enum ecore_chain_mode mode,
 				       enum ecore_chain_cnt_type cnt_type,
 				       u32 num_elems, osal_size_t elem_size,
-				       struct ecore_chain *p_chain)
+				       struct ecore_chain *p_chain,
+				       struct ecore_chain_ext_pbl *ext_pbl)
 {
 	u32 page_cnt;
 	enum _ecore_status_t rc = ECORE_SUCCESS;
@@ -3380,7 +3425,7 @@ enum _ecore_status_t ecore_chain_alloc(struct ecore_dev *p_dev,
 		rc = ecore_chain_alloc_single(p_dev, p_chain);
 		break;
 	case ECORE_CHAIN_MODE_PBL:
-		rc = ecore_chain_alloc_pbl(p_dev, p_chain);
+		rc = ecore_chain_alloc_pbl(p_dev, p_chain, ext_pbl);
 		break;
 	}
 	if (rc)
@@ -3775,8 +3820,8 @@ static enum _ecore_status_t ecore_set_coalesce(struct ecore_hwfn *p_hwfn,
 		return ECORE_INVAL;
 	}
 
-	OSAL_MEMSET(p_eth_qzone, 0, eth_qzone_size);
 	p_coal_timeset = p_eth_qzone;
+	OSAL_MEMSET(p_eth_qzone, 0, eth_qzone_size);
 	SET_FIELD(p_coal_timeset->value, COALESCING_TIMESET_TIMESET, timeset);
 	SET_FIELD(p_coal_timeset->value, COALESCING_TIMESET_VALID, 1);
 	ecore_memcpy_to(p_hwfn, p_ptt, hw_addr, p_eth_qzone, eth_qzone_size);
@@ -3789,10 +3834,10 @@ enum _ecore_status_t ecore_set_rxq_coalesce(struct ecore_hwfn *p_hwfn,
 					    u16 coalesce, u8 qid, u16 sb_id)
 {
 	struct ustorm_eth_queue_zone eth_qzone;
+	u8 timeset, timer_res;
 	u16 fw_qid = 0;
 	u32 address;
 	enum _ecore_status_t rc;
-	u8 timeset, timer_res;
 
 	/* Coalesce = (timeset << timer-resolution), timeset is 7bit wide */
 	if (coalesce <= 0x7F) {
@@ -3832,10 +3877,10 @@ enum _ecore_status_t ecore_set_txq_coalesce(struct ecore_hwfn *p_hwfn,
 					    u16 coalesce, u8 qid, u16 sb_id)
 {
 	struct xstorm_eth_queue_zone eth_qzone;
+	u8 timeset, timer_res;
 	u16 fw_qid = 0;
 	u32 address;
 	enum _ecore_status_t rc;
-	u8 timeset, timer_res;
 
 	/* Coalesce = (timeset << timer-resolution), timeset is 7bit wide */
 	if (coalesce <= 0x7F) {
@@ -4291,4 +4336,17 @@ int ecore_device_num_ports(struct ecore_dev *p_dev)
 		return 1;
 
 	return p_dev->num_ports_in_engines * ecore_device_num_engines(p_dev);
+}
+
+void ecore_set_fw_mac_addr(__le16 *fw_msb,
+			  __le16 *fw_mid,
+			  __le16 *fw_lsb,
+			  u8 *mac)
+{
+	((u8 *)fw_msb)[0] = mac[1];
+	((u8 *)fw_msb)[1] = mac[0];
+	((u8 *)fw_mid)[0] = mac[3];
+	((u8 *)fw_mid)[1] = mac[2];
+	((u8 *)fw_lsb)[0] = mac[5];
+	((u8 *)fw_lsb)[1] = mac[4];
 }

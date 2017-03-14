@@ -90,6 +90,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_cpuflags.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_string_fns.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_hexdump.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_devargs.c
+SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_bus.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_dev.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_options.c
 SRCS-$(CONFIG_RTE_LIBRTE_EAL_OSVAPP) += eal_common_thread.c

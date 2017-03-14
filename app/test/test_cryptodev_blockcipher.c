@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2015-2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2015-2017 Intel Corporation. All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -41,10 +41,12 @@
 #include <rte_cryptodev_pmd.h>
 
 #include "test.h"
+#include "test_cryptodev.h"
 #include "test_cryptodev_blockcipher.h"
 #include "test_cryptodev_aes_test_vectors.h"
 #include "test_cryptodev_des_test_vectors.h"
 #include "test_cryptodev_hash_test_vectors.h"
+#include "test_cryptodev.h"
 
 static int
 test_blockcipher_one_case(const struct blockcipher_test_case *t,
@@ -63,6 +65,7 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	struct rte_crypto_sym_op *sym_op = NULL;
 	struct rte_crypto_op *op = NULL;
 	struct rte_cryptodev_sym_session *sess = NULL;
+	struct rte_cryptodev_info dev_info;
 
 	int status = TEST_SUCCESS;
 	const struct blockcipher_test_data *tdata = t->test_data;
@@ -71,6 +74,23 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	uint32_t buf_len = tdata->ciphertext.len;
 	uint32_t digest_len = 0;
 	char *buf_p = NULL;
+	uint8_t src_pattern = 0xa5;
+	uint8_t dst_pattern = 0xb6;
+	uint8_t tmp_src_buf[MBUF_SIZE];
+	uint8_t tmp_dst_buf[MBUF_SIZE];
+
+	int nb_segs = 1;
+
+	if (t->feature_mask & BLOCKCIPHER_TEST_FEATURE_SG) {
+		rte_cryptodev_info_get(dev_id, &dev_info);
+		if (!(dev_info.feature_flags &
+				RTE_CRYPTODEV_FF_MBUF_SCATTER_GATHER)) {
+			printf("Device doesn't support scatter-gather. "
+					"Test Skipped.\n");
+			return 0;
+		}
+		nb_segs = 3;
+	}
 
 	if (tdata->cipher_key.len)
 		memcpy(cipher_key, tdata->cipher_key.data,
@@ -82,9 +102,11 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	switch (cryptodev_type) {
 	case RTE_CRYPTODEV_QAT_SYM_PMD:
 	case RTE_CRYPTODEV_OPENSSL_PMD:
+	case RTE_CRYPTODEV_ARMV8_PMD: /* Fall through */
 		digest_len = tdata->digest.len;
 		break;
 	case RTE_CRYPTODEV_AESNI_MB_PMD:
+	case RTE_CRYPTODEV_SCHEDULER_PMD:
 		digest_len = tdata->digest.truncated_len;
 		break;
 	default:
@@ -96,48 +118,38 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	}
 
 	/* preparing data */
-	ibuf = rte_pktmbuf_alloc(mbuf_pool);
-	if (!ibuf) {
-		snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
-			"line %u FAILED: %s",
-			__LINE__, "Allocation of rte_mbuf failed");
-		status = TEST_FAILED;
-		goto error_exit;
-	}
-
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER)
 		buf_len += tdata->iv.len;
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH)
 		buf_len += digest_len;
 
-	buf_p = rte_pktmbuf_append(ibuf, buf_len);
-	if (!buf_p) {
+	/* for contiguous mbuf, nb_segs is 1 */
+	ibuf = create_segmented_mbuf(mbuf_pool,
+			tdata->ciphertext.len, nb_segs, src_pattern);
+	if (ibuf == NULL) {
 		snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
 			"line %u FAILED: %s",
-			__LINE__, "No room to append mbuf");
+			__LINE__, "Cannot create source mbuf");
 		status = TEST_FAILED;
 		goto error_exit;
-	}
-
-	if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
-		rte_memcpy(buf_p, tdata->iv.data, tdata->iv.len);
-		buf_p += tdata->iv.len;
 	}
 
 	/* only encryption requires plaintext.data input,
 	 * decryption/(digest gen)/(digest verify) use ciphertext.data
 	 * to be computed
 	 */
-	if (t->op_mask & BLOCKCIPHER_TEST_OP_ENCRYPT) {
-		rte_memcpy(buf_p, tdata->plaintext.data,
-			tdata->plaintext.len);
-		buf_p += tdata->plaintext.len;
-	} else {
-		rte_memcpy(buf_p, tdata->ciphertext.data,
-			tdata->ciphertext.len);
-		buf_p += tdata->ciphertext.len;
-	}
+	if (t->op_mask & BLOCKCIPHER_TEST_OP_ENCRYPT)
+		pktmbuf_write(ibuf, 0, tdata->plaintext.len,
+				tdata->plaintext.data);
+	else
+		pktmbuf_write(ibuf, 0, tdata->ciphertext.len,
+				tdata->ciphertext.data);
 
+	if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
+		rte_memcpy(rte_pktmbuf_prepend(ibuf, tdata->iv.len),
+				tdata->iv.data, tdata->iv.len);
+	}
+	buf_p = rte_pktmbuf_append(ibuf, digest_len);
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_VERIFY)
 		rte_memcpy(buf_p, tdata->digest.data, digest_len);
 	else
@@ -152,6 +164,7 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 			status = TEST_FAILED;
 			goto error_exit;
 		}
+		memset(obuf->buf_addr, dst_pattern, obuf->buf_len);
 
 		buf_p = rte_pktmbuf_append(obuf, buf_len);
 		if (!buf_p) {
@@ -307,17 +320,17 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 
 		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_GEN) {
 			auth_xform->auth.op = RTE_CRYPTO_AUTH_OP_GENERATE;
-			sym_op->auth.digest.data = rte_pktmbuf_mtod_offset
-				(iobuf, uint8_t *, digest_offset);
+			sym_op->auth.digest.data = pktmbuf_mtod_offset
+				(iobuf, digest_offset);
 			sym_op->auth.digest.phys_addr =
-				rte_pktmbuf_mtophys_offset(iobuf,
+				pktmbuf_mtophys_offset(iobuf,
 					digest_offset);
 		} else {
 			auth_xform->auth.op = RTE_CRYPTO_AUTH_OP_VERIFY;
-			sym_op->auth.digest.data = rte_pktmbuf_mtod_offset
-				(sym_op->m_src, uint8_t *, digest_offset);
+			sym_op->auth.digest.data = pktmbuf_mtod_offset
+				(sym_op->m_src, digest_offset);
 			sym_op->auth.digest.phys_addr =
-				rte_pktmbuf_mtophys_offset(sym_op->m_src,
+				pktmbuf_mtophys_offset(sym_op->m_src,
 					digest_offset);
 		}
 
@@ -342,6 +355,17 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 		rte_crypto_op_attach_sym_session(op, sess);
 	}
 
+	TEST_HEXDUMP(stdout, "m_src(before):",
+			sym_op->m_src->buf_addr, sym_op->m_src->buf_len);
+	rte_memcpy(tmp_src_buf, sym_op->m_src->buf_addr,
+						sym_op->m_src->buf_len);
+	if (t->feature_mask & BLOCKCIPHER_TEST_FEATURE_OOP) {
+		TEST_HEXDUMP(stdout, "m_dst(before):",
+			sym_op->m_dst->buf_addr, sym_op->m_dst->buf_len);
+		rte_memcpy(tmp_dst_buf, sym_op->m_dst->buf_addr,
+						sym_op->m_dst->buf_len);
+	}
+
 	/* Process crypto operation */
 	if (rte_cryptodev_enqueue_burst(dev_id, 0, &op, 1) != 1) {
 		snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
@@ -364,12 +388,11 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 		goto error_exit;
 	}
 
-	TEST_HEXDUMP(stdout, "m_src:",
-		rte_pktmbuf_mtod(sym_op->m_src, uint8_t *), buf_len);
+	TEST_HEXDUMP(stdout, "m_src(after):",
+			sym_op->m_src->buf_addr, sym_op->m_src->buf_len);
 	if (t->feature_mask & BLOCKCIPHER_TEST_FEATURE_OOP)
-		TEST_HEXDUMP(stdout, "m_dst:",
-			rte_pktmbuf_mtod(sym_op->m_dst, uint8_t *),
-			buf_len);
+		TEST_HEXDUMP(stdout, "m_dst(after):",
+			sym_op->m_dst->buf_addr, sym_op->m_dst->buf_len);
 
 	/* Verify results */
 	if (op->status != RTE_CRYPTO_OP_STATUS_SUCCESS) {
@@ -386,12 +409,9 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	}
 
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
-		uint8_t *crypto_res;
+		uint8_t buffer[2048];
 		const uint8_t *compare_ref;
 		uint32_t compare_len;
-
-		crypto_res = rte_pktmbuf_mtod_offset(iobuf, uint8_t *,
-			tdata->iv.len);
 
 		if (t->op_mask & BLOCKCIPHER_TEST_OP_ENCRYPT) {
 			compare_ref = tdata->ciphertext.data;
@@ -401,7 +421,8 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 			compare_len = tdata->plaintext.len;
 		}
 
-		if (memcmp(crypto_res, compare_ref, compare_len)) {
+		if (memcmp(rte_pktmbuf_read(iobuf, tdata->iv.len, compare_len,
+				buffer), compare_ref, compare_len)) {
 			snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN, "line %u "
 				"FAILED: %s", __LINE__,
 				"Crypto data not as expected");
@@ -414,12 +435,11 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 		uint8_t *auth_res;
 
 		if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER)
-			auth_res = rte_pktmbuf_mtod_offset(iobuf,
-				uint8_t *,
-				tdata->iv.len + tdata->ciphertext.len);
+			auth_res = pktmbuf_mtod_offset(iobuf,
+					tdata->iv.len + tdata->ciphertext.len);
 		else
-			auth_res = rte_pktmbuf_mtod_offset(iobuf,
-				uint8_t *, tdata->ciphertext.len);
+			auth_res = pktmbuf_mtod_offset(iobuf,
+					tdata->ciphertext.len);
 
 		if (memcmp(auth_res, tdata->digest.data, digest_len)) {
 			snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN, "line %u "
@@ -427,6 +447,120 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 				"digest data not as expected");
 			status = TEST_FAILED;
 			goto error_exit;
+		}
+	}
+
+	/* The only parts that should have changed in the buffer are
+	 * plaintext/ciphertext and digest.
+	 * In OOP only the dest buffer should change.
+	 */
+	if (t->feature_mask & BLOCKCIPHER_TEST_FEATURE_OOP) {
+		struct rte_mbuf *mbuf;
+		uint8_t value;
+		uint32_t head_unchanged_len = 0, changed_len = 0;
+		uint32_t i;
+
+		mbuf = sym_op->m_src;
+		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_VERIFY) {
+			/* white-box test: PMDs use some of the
+			 * tailroom as temp storage in verify case
+			 */
+			head_unchanged_len = rte_pktmbuf_headroom(mbuf)
+					+ rte_pktmbuf_data_len(mbuf);
+			changed_len = digest_len;
+		} else {
+			head_unchanged_len = mbuf->buf_len;
+			changed_len = 0;
+		}
+
+		for (i = 0; i < mbuf->buf_len; i++) {
+			if (i == head_unchanged_len)
+				i += changed_len;
+			value = *((uint8_t *)(mbuf->buf_addr)+i);
+			if (value != tmp_src_buf[i]) {
+				snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
+	"line %u FAILED: OOP src outer mbuf data (0x%x) not as expected (0x%x)",
+					__LINE__, value, tmp_src_buf[i]);
+				status = TEST_FAILED;
+				goto error_exit;
+			}
+		}
+
+		mbuf = sym_op->m_dst;
+		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH) {
+			head_unchanged_len = rte_pktmbuf_headroom(mbuf) +
+						sym_op->auth.data.offset;
+			changed_len = sym_op->auth.data.length;
+			if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_GEN)
+				changed_len += sym_op->auth.digest.length;
+		} else {
+			/* cipher-only */
+			head_unchanged_len = rte_pktmbuf_headroom(mbuf) +
+					sym_op->cipher.data.offset;
+			changed_len = sym_op->cipher.data.length;
+		}
+
+		for (i = 0; i < mbuf->buf_len; i++) {
+			if (i == head_unchanged_len)
+				i += changed_len;
+			value = *((uint8_t *)(mbuf->buf_addr)+i);
+			if (value != tmp_dst_buf[i]) {
+				snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
+				"line %u FAILED: OOP dst outer mbuf data "
+				"(0x%x) not as expected (0x%x)",
+				__LINE__, value, tmp_dst_buf[i]);
+				status = TEST_FAILED;
+				goto error_exit;
+			}
+		}
+	} else {
+		/* In-place operation */
+		struct rte_mbuf *mbuf;
+		uint8_t value;
+		uint32_t head_unchanged_len = 0, changed_len = 0;
+		uint32_t i;
+
+		mbuf = sym_op->m_src;
+		if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
+			head_unchanged_len = rte_pktmbuf_headroom(mbuf) +
+					sym_op->cipher.data.offset;
+			changed_len = sym_op->cipher.data.length;
+		} else {
+			/* auth-only */
+			head_unchanged_len = rte_pktmbuf_headroom(mbuf) +
+					sym_op->auth.data.offset +
+					sym_op->auth.data.length;
+			changed_len = 0;
+		}
+
+		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_GEN)
+			changed_len += sym_op->auth.digest.length;
+
+		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_VERIFY) {
+			/* white-box test: PMDs use some of the
+			 * tailroom as temp storage in verify case
+			 */
+			if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
+				/* This is simplified, not checking digest*/
+				changed_len += digest_len*2;
+			} else {
+				head_unchanged_len += digest_len;
+				changed_len += digest_len;
+			}
+		}
+
+		for (i = 0; i < mbuf->buf_len; i++) {
+			if (i == head_unchanged_len)
+				i += changed_len;
+			value = *((uint8_t *)(mbuf->buf_addr)+i);
+			if (value != tmp_src_buf[i]) {
+				snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
+				"line %u FAILED: outer mbuf data (0x%x) "
+				"not as expected (0x%x)",
+				__LINE__, value, tmp_src_buf[i]);
+				status = TEST_FAILED;
+				goto error_exit;
+			}
 		}
 	}
 
@@ -489,6 +623,11 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 		sizeof(triple_des_cipheronly_test_cases[0]);
 		tcs = triple_des_cipheronly_test_cases;
 		break;
+	case BLKCIPHER_DES_CIPHERONLY_TYPE:
+		n_test_cases = sizeof(des_cipheronly_test_cases) /
+		sizeof(des_cipheronly_test_cases[0]);
+		tcs = des_cipheronly_test_cases;
+		break;
 	case BLKCIPHER_AUTHONLY_TYPE:
 		n_test_cases = sizeof(hash_test_cases) /
 		sizeof(hash_test_cases[0]);
@@ -507,6 +646,12 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 		break;
 	case RTE_CRYPTODEV_OPENSSL_PMD:
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL;
+		break;
+	case RTE_CRYPTODEV_ARMV8_PMD:
+		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8;
+		break;
+	case RTE_CRYPTODEV_SCHEDULER_PMD:
+		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER;
 		break;
 	default:
 		TEST_ASSERT(0, "Unrecognized cryptodev type");
