@@ -120,11 +120,14 @@ DPDK_2.1 {
 	rte_eal_pci_detach;
 	rte_eal_pci_read_config;
 	rte_eal_pci_write_config;
+	rte_epoll_ctl;
+	rte_epoll_wait;
 	rte_intr_allow_others;
 	rte_intr_dp_is_en;
 	rte_intr_efd_disable;
 	rte_intr_efd_enable;
 	rte_intr_rx_ctl;
+	rte_intr_tls_epfd;
 	rte_memzone_free;
 
 } DPDK_2.0;
@@ -159,9 +162,9 @@ DPDK_16.07 {
 	global:
 
 	rte_keepalive_mark_sleep;
-  rte_keepalive_register_relay_callback;
-  rte_rtm_supported;
-  rte_thread_setname;
+	rte_keepalive_register_relay_callback;
+	rte_rtm_supported;
+	rte_thread_setname;
 
 } DPDK_16.04;
 
@@ -169,21 +172,21 @@ DPDK_16.11 {
 	global:
 
 	rte_delay_us_block;
-  rte_delay_us_callback_register;
-  rte_eal_dev_attach;
-  rte_eal_dev_detach;
-  rte_eal_vdrv_register;
-  rte_eal_vdrv_unregister;
+	rte_delay_us_callback_register;
+	rte_eal_dev_attach;
+	rte_eal_dev_detach;
+	rte_eal_vdrv_register;
+	rte_eal_vdrv_unregister;
 
 } DPDK_16.07;
 
 DPDK_17.02 {
-  global;
+	global:
 
-  rte_bus_dump;
-  rte_bus_probe;
-  rte_bus_register;
-  rte_bus_scan;
-  rte_bus_unregister;
+	rte_bus_dump;
+	rte_bus_probe;
+	rte_bus_register;
+	rte_bus_scan;
+	rte_bus_unregister;
 
 } DPDK_16.11;

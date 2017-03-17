@@ -81,17 +81,17 @@ int eal_interrupts_osv_setup(struct rte_intr_handle *handle,
 void
 rte::pollable::set_callback(std::function<void ()> callback)
 {
-        _callback = callback;
+	_callback = callback;
 }
 
 void
 rte::pollable::on_wake()
 {
-        if (_callback) {
-                _callback();
-        }
+	if (_callback) {
+		_callback();
+	}
 
-        enable();
+	enable();
 }
 
 bool
@@ -115,7 +115,7 @@ rte::pollable_vector::disable()
 }
 
 void
-rte::poller::reset(size_t hint)
+rte::poller::events_reset(size_t hint)
 {
 	SCOPE_LOCK(_lock);
 	_data.clear();
@@ -123,14 +123,14 @@ rte::poller::reset(size_t hint)
 }
 
 void
-rte::poller::add(void *data)
+rte::poller::events_add(void *data)
 {
 	SCOPE_LOCK(_lock);
 	_data.push_back(data);
 }
 
 size_t
-rte::poller::get(struct rte_epoll_event *events, size_t max_events)
+rte::poller::events_get(struct rte_epoll_event *events, size_t max_events)
 {
 	size_t nb_events = RTE_MIN(_data.size(), max_events);
 	for (size_t i = 0; i < nb_events; i++) {
@@ -153,7 +153,7 @@ rte::intr_source::add(rte_intr_callback_fn cb_fn, void *cb_arg)
 {
 	/*
 	 * Seems kind of silly to allocate this memory from an rte
-	 * routine given how many objects C++ objects we're allocating
+	 * routine given how many C++ objects we're allocating
 	 * off the heap, but we can try to do what the linuxapp does. :)
 	 */
 	struct rte_intr_callback *cb = static_cast<struct rte_intr_callback *>(

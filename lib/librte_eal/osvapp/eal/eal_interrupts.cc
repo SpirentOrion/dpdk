@@ -338,7 +338,7 @@ rte_epoll_wait(int epfd, struct rte_epoll_event *events,
 	assert(ep != nullptr);
 
 	/* Get setup for our attack run... */
-	ep->reset(maxevents);
+	ep->events_reset(maxevents);
 
 	if (timeout > 0) {
 		auto expire = (std::chrono::high_resolution_clock::now()
@@ -346,27 +346,14 @@ rte_epoll_wait(int epfd, struct rte_epoll_event *events,
 		ep->set_timer(expire);
 	}
 
-	if (timeout != 0) {
-		/*
-		 * >0 means we have an explicit timeout, which is set
-		 * <0 means we wait until something happens
-		 */
-		ep->wait();
-	}
+	ep->wait();
 
 	if (!ep->expired()) {
 		/* Timer didn't expire, so something needs to be serviced */
 		ep->process();
 	}
 
-	size_t nb_events = ep->get(events, maxevents);
-	if (nb_events == maxevents) {
-		/* XXX: need to fix this */
-		RTE_LOG(WARNING, EAL, "Maximum number of epoll events returned.	 "
-			"Some events were probably lost.\n");
-	}
-
-	return nb_events;
+	return ep->events_get(events, maxevents);
 }
 
 int
@@ -397,7 +384,7 @@ rte_intr_rx_ctl(struct rte_intr_handle *intr_handle,
 	switch (op) {
 	case RTE_INTR_EVENT_ADD:
 		pv->set_callback(
-			[ep, data] { ep->add(data); });
+			[ep, data] { ep->events_add(data); });
 		ep->add(pv);
 		RTE_LOG(DEBUG, EAL,
 			"Added vector %u to poller id %d\n",

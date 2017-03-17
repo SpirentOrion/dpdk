@@ -90,9 +90,9 @@ namespace rte {
 		poller() {};
 		virtual ~poller() {};
 
-		void reset(size_t hint);
-		void add(void *data);
-		size_t get(struct rte_epoll_event *events, size_t max_events);
+		void   events_reset(size_t hint);
+		void   events_add(void *data);
+		size_t events_get(struct rte_epoll_event *events, size_t max_events);
 	private:
 		std::vector<void *> _data;
 		mutex _lock;
